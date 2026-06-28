@@ -1,8 +1,10 @@
 package web
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"strconv"
@@ -11,6 +13,9 @@ import (
 	"github.com/user/anticheat_cl/database"
 	"github.com/user/anticheat_cl/server"
 )
+
+//go:embed static/*
+var staticFiles embed.FS
 
 // WebServer serves the dashboard
 type WebServer struct {
@@ -39,8 +44,9 @@ func New(listenAddr string, db *database.DB, handler *server.Handler) *WebServer
 func (ws *WebServer) routes() {
 	ws.mux.HandleFunc("/login", ws.handleLogin)
 	ws.mux.HandleFunc("/logout", ws.handleLogout)
+	staticFS, _ := fs.Sub(staticFiles, "static")
 	ws.mux.Handle("/static/", http.StripPrefix("/static/",
-		http.FileServer(http.Dir("web/static"))))
+		http.FileServer(http.FS(staticFS))))
 	ws.mux.Handle("/", ws.authMiddleware(http.HandlerFunc(ws.handleDashboard)))
 	ws.mux.Handle("/screenshots", ws.authMiddleware(http.HandlerFunc(ws.handleScreenshots)))
 	ws.mux.Handle("/screenshots/review", ws.authMiddleware(http.HandlerFunc(ws.handleReviewScreenshot)))
