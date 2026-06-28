@@ -27,9 +27,6 @@ WORKDIR /app
 # Copy binary from builder
 COPY --from=builder /app/anticheat-server .
 
-# Copy static files for web dashboard
-COPY --from=builder /app/web/static /app/web/static
-
 # Create directories for runtime data
 RUN mkdir -p /app/data/screenshots && \
     chown -R acuser:acuser /app
