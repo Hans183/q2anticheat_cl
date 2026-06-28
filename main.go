@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -23,6 +24,33 @@ type Config struct {
 	WebAddr       string
 	AdminUser     string
 	AdminPass     string
+}
+
+// parseAdminUsers parses "user1:pass1,user2:pass2" into AdminInput list
+func parseAdminUsers(raw string) []database.AdminInput {
+	var admins []database.AdminInput
+	for _, pair := range strings.Split(raw, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		parts := strings.SplitN(pair, ":", 2)
+		if len(parts) != 2 {
+			log.Printf("Warning: invalid admin format %q (expected user:pass), skipping", pair)
+			continue
+		}
+		username := strings.TrimSpace(parts[0])
+		password := strings.TrimSpace(parts[1])
+		if username == "" || password == "" {
+			log.Printf("Warning: empty username or password in %q, skipping", pair)
+			continue
+		}
+		admins = append(admins, database.AdminInput{
+			Username:     username,
+			PasswordHash: web.HashPassword(password),
+		})
+	}
+	return admins
 }
 
 func main() {
@@ -70,9 +98,21 @@ func main() {
 	}
 	defer db.Close()
 
-	// Initialize default admin user
-	if err := web.InitDefaultAdmin(db, config.AdminUser, config.AdminPass); err != nil {
-		log.Printf("Warning: could not create default admin: %v", err)
+	// Initialize admin users
+	adminsEnv := os.Getenv("ADMIN_USERS")
+	if adminsEnv != "" {
+		// Multiple admins: format "user1:pass1,user2:pass2"
+		admins := parseAdminUsers(adminsEnv)
+		if len(admins) > 0 {
+			if err := web.InitAdmins(db, admins); err != nil {
+				log.Printf("Warning: could not create admin users: %v", err)
+			}
+		}
+	} else {
+		// Single admin fallback via ADMIN_USER/ADMIN_PASS or CLI flags
+		if err := web.InitDefaultAdmin(db, config.AdminUser, config.AdminPass); err != nil {
+			log.Printf("Warning: could not create default admin: %v", err)
+		}
 	}
 
 	storage, err := screenshots.NewStorage(config.ScreenshotDir, db)

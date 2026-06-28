@@ -32,3 +32,8 @@ func CheckPassword(hash, password string) bool {
 func InitDefaultAdmin(db *database.DB, username, password string) error {
 	return db.EnsureDefaultAdmin(username, HashPassword(password))
 }
+
+// InitAdmins creates multiple admin users from a list, skipping existing ones
+func InitAdmins(db *database.DB, admins []database.AdminInput) error {
+	return db.EnsureAdmins(admins)
+}

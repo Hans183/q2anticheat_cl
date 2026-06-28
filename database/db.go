@@ -151,6 +151,34 @@ func (db *DB) EnsureDefaultAdmin(username, passwordHash string) error {
 	return err
 }
 
+// AdminInput holds username and hashed password for admin creation
+type AdminInput struct {
+	Username     string
+	PasswordHash string
+}
+
+// EnsureAdmins creates multiple admin users, skipping existing ones
+func (db *DB) EnsureAdmins(admins []AdminInput) error {
+	for _, admin := range admins {
+		var exists bool
+		err := db.conn.QueryRow("SELECT EXISTS(SELECT 1 FROM admins WHERE username = ?)",
+			admin.Username).Scan(&exists)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		_, err = db.conn.Exec("INSERT INTO admins (username, password) VALUES (?, ?)",
+			admin.Username, admin.PasswordHash)
+		if err != nil {
+			return err
+		}
+		log.Printf("[DB] Created admin user: %s", admin.Username)
+	}
+	return nil
+}
+
 // GetAdminByUsername retrieves an admin by username
 func (db *DB) GetAdminByUsername(username string) (*AdminRecord, error) {
 	admin := &AdminRecord{}
