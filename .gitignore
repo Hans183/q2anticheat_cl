@@ -1,0 +1,25 @@
+# Binaries
+*.exe
+anticheat-server
+
+# Data (runtime only)
+data/
+
+# Database files
+*.db
+*.db-wal
+*.db-shm
+
+# Clients directory
+clients/
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

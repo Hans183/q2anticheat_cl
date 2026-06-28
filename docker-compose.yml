@@ -1,0 +1,23 @@
+services:
+  anticheat:
+    build: .
+    container_name: q2pro-anticheat
+    ports:
+      - "27915:27915/tcp"
+      - "27916:27916/tcp"
+    volumes:
+      - ac-data:/app/data
+    restart: unless-stopped
+    environment:
+      - TZ=UTC
+      - ADMIN_USER=admin
+      - ADMIN_PASS=admin123
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:27916"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  ac-data:
+    driver: local
