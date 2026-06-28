@@ -1,3 +1,12 @@
+// Sidebar toggle for mobile
+function toggleSidebar() {
+  var sidebar = document.querySelector('.sidebar');
+  var overlay = document.querySelector('.sidebar-overlay');
+  sidebar.classList.toggle('open');
+  overlay.classList.toggle('active');
+}
+
+// Lightbox
 function openLightbox(src, name, ip, date, server) {
   var lb = document.getElementById('lightbox');
   var img = document.getElementById('lightbox-img');

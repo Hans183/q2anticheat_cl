@@ -141,13 +141,13 @@ var templates = map[string]string{
 </div></div>
 <div class="card"><div class="card-header"><h3>Historial de Violaciones ({{.Total}} total)</h3></div><div class="card-body">
 {{if .Violations}}
-<table class="data-table"><thead><tr><th>Fecha</th><th>Servidor</th><th>Jugador</th><th>IP</th><th>Tipo</th><th>Razon</th></tr></thead>
+<div class="table-responsive"><table class="data-table"><thead><tr><th>Fecha</th><th>Servidor</th><th>Jugador</th><th>IP</th><th>Tipo</th><th>Razon</th></tr></thead>
 <tbody>{{range .Violations}}<tr>
   <td>{{.Timestamp.Format "2006-01-02 15:04:05"}}</td>
   <td>{{.ServerAddr}}</td><td>{{.PlayerName}}</td><td><code>{{.PlayerIP}}</code></td>
   <td><span class="badge badge-{{if eq .Type "file"}}warning{{else if eq .Type "cvar"}}danger{{else}}info{{end}}">{{.Type}}</span></td>
   <td>{{.Reason}}</td>
-</tr>{{end}}</tbody></table>
+</tr>{{end}}</tbody></table></div>
 {{if gt .TotalPages 1}}<div class="pagination">
   {{if gt .Page 1}}<a href="?page={{sub .Page 1}}&player={{.PlayerIP}}&type={{.Type}}&from={{.DateFrom}}&to={{.DateTo}}" class="btn btn-sm">Anterior</a>{{end}}
   <span class="page-info">Pagina {{.Page}} de {{.TotalPages}}</span>
@@ -180,13 +180,13 @@ var templates = map[string]string{
   </div>
   <div class="server-clients"><h4>Clientes ({{len .Clients}})</h4>
   {{if .Clients}}
-  <table class="data-table compact"><thead><tr><th>ID</th><th>Nombre</th><th>IP</th><th>Tipo</th><th>Valido</th><th>Fallos</th></tr></thead>
+  <div class="table-responsive"><table class="data-table compact"><thead><tr><th>ID</th><th>Nombre</th><th>IP</th><th>Tipo</th><th>Valido</th><th>Fallos</th></tr></thead>
   <tbody>{{range $id, $client := .Clients}}<tr>
     <td>{{$client.ClientID}}</td><td>{{$client.Name}}</td><td><code>{{$client.IP}}</code></td>
     <td>{{$client.ClientTypeString}}</td>
     <td>{{if $client.Valid}}<span class="badge badge-success">Si</span>{{else}}<span class="badge badge-danger">No</span>{{end}}</td>
     <td>{{$client.FileFailures}}</td>
-  </tr>{{end}}</tbody></table>
+  </tr>{{end}}</tbody></table></div>
   {{else}}<div class="empty-state small"><p>No hay clientes conectados</p></div>{{end}}
   </div>
 </div>
@@ -197,7 +197,9 @@ var templates = map[string]string{
 <script>setTimeout(function(){location.reload()},5000)</script>
 </body></html>`,
 
-"sidebar": `<div class="sidebar">
+"sidebar": `<button class="hamburger" onclick="toggleSidebar()">&#9776;</button>
+<div class="sidebar-overlay" onclick="toggleSidebar()"></div>
+<div class="sidebar">
   <div class="sidebar-header"><div class="logo">&#128737;</div><span class="logo-text">Anticheat</span></div>
   <nav class="sidebar-nav">
     <a href="/" class="nav-item {{if eq .CurrentPage "dashboard"}}active{{end}}"><span class="nav-icon">&#9632;</span> Dashboard</a>
