@@ -61,6 +61,25 @@ type SessionRecord struct {
 	ExpiresAt time.Time
 }
 
+// parseTimestamp tries multiple formats to parse a timestamp string from SQLite.
+func parseTimestamp(ts string) time.Time {
+	if ts == "" {
+		return time.Time{}
+	}
+	formats := []string{
+		time.RFC3339,                          // 2006-01-02T15:04:05Z07:00
+		"2006-01-02T15:04:05.999999999Z07:00", // with nanoseconds
+		"2006-01-02 15:04:05",                 // SQLite CURRENT_TIMESTAMP
+		"2006-01-02T15:04:05Z",                // UTC without offset
+	}
+	for _, f := range formats {
+		if t, err := time.Parse(f, ts); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
 // New creates a new database connection and initializes schema
 func New(dbPath string) (*DB, error) {
 	conn, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL")
@@ -270,10 +289,7 @@ func (db *DB) GetScreenshot(id int64) (*ScreenshotRecord, error) {
 	if notes.Valid {
 		record.Notes = notes.String
 	}
-	record.Timestamp, _ = time.Parse("2006-01-02T15:04:05Z", ts)
-	if record.Timestamp.IsZero() {
-		record.Timestamp, _ = time.Parse("2006-01-02 15:04:05", ts)
-	}
+	record.Timestamp = parseTimestamp(ts)
 	return record, nil
 }
 
@@ -479,10 +495,7 @@ func scanScreenshots(rows *sql.Rows) ([]*ScreenshotRecord, error) {
 		if notes.Valid {
 			record.Notes = notes.String
 		}
-		record.Timestamp, _ = time.Parse("2006-01-02T15:04:05Z", ts)
-		if record.Timestamp.IsZero() {
-			record.Timestamp, _ = time.Parse("2006-01-02 15:04:05", ts)
-		}
+		record.Timestamp = parseTimestamp(ts)
 		records = append(records, record)
 	}
 	return records, rows.Err()
@@ -508,10 +521,7 @@ func scanViolations(rows *sql.Rows) ([]*ViolationRecord, error) {
 		if details.Valid {
 			record.Details = details.String
 		}
-		record.Timestamp, _ = time.Parse("2006-01-02T15:04:05Z", ts)
-		if record.Timestamp.IsZero() {
-			record.Timestamp, _ = time.Parse("2006-01-02 15:04:05", ts)
-		}
+		record.Timestamp = parseTimestamp(ts)
 		records = append(records, record)
 	}
 	return records, rows.Err()
