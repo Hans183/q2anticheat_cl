@@ -433,15 +433,25 @@ func (h *Handler) GetServers() []*GameServer {
 
 	servers := make([]*GameServer, 0, len(h.servers))
 	for _, gs := range h.servers {
-		servers = append(servers, gs)
+		if gs.GetState() != StateDisconnected {
+			servers = append(servers, gs)
+		}
 	}
 	return servers
 }
 
+// RemoveServer removes a disconnected server from the map
+func (h *Handler) RemoveServer(addr string) {
+	h.serversMu.Lock()
+	defer h.serversMu.Unlock()
+	delete(h.servers, addr)
+	log.Printf("[HANDLER] Removed disconnected server: %s", addr)
+}
+
 // CheckTimeouts checks for timed out connections
 func (h *Handler) CheckTimeouts() {
-	h.serversMu.RLock()
-	defer h.serversMu.RUnlock()
+	h.serversMu.Lock()
+	defer h.serversMu.Unlock()
 
 	now := time.Now()
 	for addr, gs := range h.servers {

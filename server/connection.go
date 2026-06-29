@@ -77,8 +77,13 @@ func NewGameServer(conn net.Conn) *GameServer {
 }
 
 // Handle processes messages from this game server
-func (gs *GameServer) Handle(msgHandler func(*GameServer, []byte)) {
-	defer gs.Close()
+func (gs *GameServer) Handle(msgHandler func(*GameServer, []byte), onDisconnect func(string)) {
+	defer func() {
+		gs.Close()
+		if onDisconnect != nil {
+			onDisconnect(gs.RemoteAddr.String())
+		}
+	}()
 
 	gs.mu.Lock()
 	gs.State = StateConnected

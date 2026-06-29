@@ -77,7 +77,9 @@ func (s *TCPServer) acceptLoop() {
 
 		// Create game server and handle in goroutine
 		gs := NewGameServer(conn)
-		go gs.Handle(s.handler.HandleMessage)
+		go gs.Handle(s.handler.HandleMessage, func(addr string) {
+			s.handler.RemoveServer(addr)
+		})
 	}
 }
 
