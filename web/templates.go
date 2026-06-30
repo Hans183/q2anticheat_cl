@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"html/template"
 	"io"
 	"log"
@@ -28,6 +29,46 @@ func NewTemplates() *Templates {
 				return s
 			},
 			"lower": strings.ToLower,
+			"violationsCount": func(s string) int {
+				if s == "" { return 0 }
+				return len(strings.Split(s, ";"))
+			},
+			"violationsPreview": func(s string) string {
+				if s == "" { return "" }
+				parts := strings.Split(s, ";")
+				var preview []string
+				maxItems := 2
+				if len(parts) < maxItems { maxItems = len(parts) }
+				for i := 0; i < maxItems; i++ {
+					item := strings.TrimSpace(parts[i])
+					// Extract just the process/module name from "proceso sospechoso: Name.exe (pid=X, patron: Y)"
+					if idx := strings.Index(item, ": "); idx != -1 {
+						item = item[idx+2:]
+					}
+					if idx := strings.Index(item, " ("); idx != -1 {
+						item = item[:idx]
+					}
+					if len(item) > 40 {
+						item = item[:37] + "..."
+					}
+					preview = append(preview, item)
+				}
+				result := strings.Join(preview, ", ")
+				if len(parts) > maxItems {
+					result += fmt.Sprintf(" +%d mas", len(parts)-maxItems)
+				}
+				return result
+			},
+			"violationsList": func(s string) []string {
+				if s == "" { return nil }
+				parts := strings.Split(s, ";")
+				var result []string
+				for _, p := range parts {
+					p = strings.TrimSpace(p)
+					if p != "" { result = append(result, p) }
+				}
+				return result
+			},
 		},
 	}
 

@@ -204,6 +204,10 @@ var templates = map[string]string{
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Q2PRO Anticheat - Process Snapshots</title>
 <link rel="stylesheet" href="/static/style.css">
+<style>
+.violation-preview { font-size: 11px; color: #f87171; margin-top: 4px; line-height: 1.3; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.violation-count { font-weight: 600; }
+</style>
 </head><body>
 {{template "sidebar" .}}
 <div class="main-content">
@@ -229,7 +233,7 @@ var templates = map[string]string{
     <td>{{.PlayerIP}}</td>
     <td>{{.NumProcesses}}</td>
     <td>{{.NumModules}}</td>
-    <td>{{if .Violations}}<span class="badge badge-danger">{{.Violations}}</span>{{else}}<span class="badge badge-success">Clean</span>{{end}}</td>
+    <td>{{if .Violations}}<span class="badge badge-danger violation-count">{{violationsCount .Violations}} violaciones</span><div class="violation-preview" title="{{.Violations}}">{{violationsPreview .Violations}}</div>{{else}}<span class="badge badge-success">Clean</span>{{end}}</td>
     <td>{{.Timestamp.Format "2006-01-02 15:04:05"}}</td>
   </tr>
   {{end}}</tbody>
