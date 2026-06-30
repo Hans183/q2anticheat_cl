@@ -61,6 +61,20 @@ type SessionRecord struct {
 	ExpiresAt time.Time
 }
 
+// ProcessSnapshotRecord represents a stored process snapshot
+type ProcessSnapshotRecord struct {
+	ID           int64
+	ServerAddr   string
+	PlayerIP     string
+	PlayerName   string
+	ClientID     int
+	NumProcesses int
+	NumModules   int
+	Violations   string
+	RawData      []byte
+	Timestamp    time.Time
+}
+
 // parseTimestamp tries multiple formats to parse a timestamp string from SQLite.
 func parseTimestamp(ts string) time.Time {
 	if ts == "" {
@@ -149,6 +163,23 @@ func (db *DB) migrate() error {
 		expires_at DATETIME NOT NULL,
 		FOREIGN KEY (admin_id) REFERENCES admins(id)
 	);
+
+	CREATE TABLE IF NOT EXISTS process_snapshots (
+		id            INTEGER PRIMARY KEY AUTOINCREMENT,
+		server_addr   TEXT NOT NULL,
+		player_ip     TEXT NOT NULL,
+		player_name   TEXT NOT NULL,
+		client_id     INTEGER,
+		num_processes INTEGER NOT NULL,
+		num_modules   INTEGER NOT NULL,
+		violations    TEXT,
+		raw_data      BLOB,
+		timestamp     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_process_snapshots_player ON process_snapshots(player_ip);
+	CREATE INDEX IF NOT EXISTS idx_process_snapshots_date ON process_snapshots(timestamp);
+	CREATE INDEX IF NOT EXISTS idx_process_snapshots_server ON process_snapshots(server_addr);
 	`
 
 	_, err := db.conn.Exec(schema)
@@ -446,6 +477,14 @@ func (db *DB) GetStats() (map[string]interface{}, error) {
 	db.conn.QueryRow("SELECT COUNT(*) FROM violations WHERE timestamp >= date('now')").Scan(&todayViolations)
 	stats["today_violations"] = todayViolations
 
+	var totalProcessSnapshots int
+	db.conn.QueryRow("SELECT COUNT(*) FROM process_snapshots").Scan(&totalProcessSnapshots)
+	stats["total_process_snapshots"] = totalProcessSnapshots
+
+	var todayProcessSnapshots int
+	db.conn.QueryRow("SELECT COUNT(*) FROM process_snapshots WHERE timestamp >= date('now')").Scan(&todayProcessSnapshots)
+	stats["today_process_snapshots"] = todayProcessSnapshots
+
 	// Violations per day for last 7 days
 	rows, err := db.conn.Query(`
 		SELECT date(timestamp) as day, COUNT(*) as cnt
@@ -468,6 +507,90 @@ func (db *DB) GetStats() (map[string]interface{}, error) {
 	}
 
 	return stats, nil
+}
+
+// InsertProcessSnapshot stores a new process snapshot record
+func (db *DB) InsertProcessSnapshot(serverAddr, playerIP, playerName string,
+	clientID, numProcesses, numModules int, violations string, rawData []byte) (int64, error) {
+	result, err := db.conn.Exec(`
+		INSERT INTO process_snapshots (server_addr, player_ip, player_name, client_id,
+			num_processes, num_modules, violations, raw_data, timestamp)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		serverAddr, playerIP, playerName, clientID,
+		numProcesses, numModules, violations, rawData, time.Now())
+	if err != nil {
+		return 0, fmt.Errorf("insert process snapshot: %w", err)
+	}
+	return result.LastInsertId()
+}
+
+// GetProcessSnapshots retrieves process snapshots with optional filters
+func (db *DB) GetProcessSnapshots(playerIP, dateFrom, dateTo string, page, perPage int) ([]*ProcessSnapshotRecord, int, error) {
+	where := "1=1"
+	args := []interface{}{}
+
+	if playerIP != "" {
+		where += " AND player_ip LIKE ?"
+		args = append(args, "%"+playerIP+"%")
+	}
+	if dateFrom != "" {
+		where += " AND timestamp >= ?"
+		args = append(args, dateFrom)
+	}
+	if dateTo != "" {
+		where += " AND timestamp <= ?"
+		args = append(args, dateTo+" 23:59:59")
+	}
+
+	var total int
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM process_snapshots WHERE %s", where)
+	err := db.conn.QueryRow(countQuery, args...).Scan(&total)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	offset := (page - 1) * perPage
+	query := fmt.Sprintf(`
+		SELECT id, server_addr, player_ip, player_name, client_id,
+			num_processes, num_modules, violations, raw_data, timestamp
+		FROM process_snapshots WHERE %s
+		ORDER BY timestamp DESC LIMIT ? OFFSET ?`, where)
+	args = append(args, perPage, offset)
+
+	rows, err := db.conn.Query(query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	records, err := scanProcessSnapshots(rows)
+	return records, total, err
+}
+
+func scanProcessSnapshots(rows *sql.Rows) ([]*ProcessSnapshotRecord, error) {
+	var records []*ProcessSnapshotRecord
+	for rows.Next() {
+		record := &ProcessSnapshotRecord{}
+		var ts string
+		var violations sql.NullString
+		var clientID sql.NullInt64
+		err := rows.Scan(
+			&record.ID, &record.ServerAddr, &record.PlayerIP, &record.PlayerName,
+			&clientID, &record.NumProcesses, &record.NumModules,
+			&violations, &record.RawData, &ts)
+		if err != nil {
+			return nil, err
+		}
+		if clientID.Valid {
+			record.ClientID = int(clientID.Int64)
+		}
+		if violations.Valid {
+			record.Violations = violations.String
+		}
+		record.Timestamp = parseTimestamp(ts)
+		records = append(records, record)
+	}
+	return records, rows.Err()
 }
 
 // Close closes the database connection

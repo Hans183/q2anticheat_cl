@@ -17,6 +17,7 @@ type Message struct {
 	Prefs    *PrefsMessage
 	Screenshot *ScreenshotData
 	ClientData *ClientDataMessage
+	ProcessData *ProcessDataMessage
 }
 
 // ClientFileData represents a single file hash reported by the client
@@ -38,6 +39,29 @@ type ClientDataMessage struct {
 	PlayerName string
 	Files      []ClientFileData
 	Cvars      []ClientCvarData
+}
+
+// ProcessEntry represents a single running process
+type ProcessEntry struct {
+	PID      uint32
+	ParentPID uint32
+	Name     string
+}
+
+// ModuleEntry represents a single loaded module/library
+type ModuleEntry struct {
+	Name   string
+	Path   string
+	SHA1   [20]byte
+}
+
+// ProcessDataMessage contains a process snapshot from a client (ACC_PROCESSDATA)
+type ProcessDataMessage struct {
+	ClientID    uint32
+	Challenge   uint32
+	PlayerName  string
+	Processes   []ProcessEntry
+	Modules     []ModuleEntry
 }
 
 // VersionMessage is sent by q2pro server during handshake (ACC_VERSION)
@@ -169,6 +193,12 @@ func ParseMessage(buf []byte) (*Message, error) {
 		err := parseClientDataMessage(r, msg)
 		if err != nil {
 			return nil, fmt.Errorf("parse client data: %w", err)
+		}
+
+	case ACC_PROCESSDATA:
+		err := parseProcessDataMessage(r, msg)
+		if err != nil {
+			return nil, fmt.Errorf("parse process data: %w", err)
 		}
 
 	default:
@@ -488,6 +518,93 @@ func parseClientDataMessage(r *Reader, msg *Message) error {
 		PlayerName: playerName,
 		Files:      files,
 		Cvars:      cvars,
+	}
+	return nil
+}
+
+func parseProcessDataMessage(r *Reader, msg *Message) error {
+	clientID, err := r.ReadUint32()
+	if err != nil {
+		return err
+	}
+
+	challenge, err := r.ReadUint32()
+	if err != nil {
+		return err
+	}
+
+	playerName, err := r.ReadString()
+	if err != nil {
+		return err
+	}
+
+	numProcesses, err := r.ReadUint32()
+	if err != nil {
+		return err
+	}
+
+	processes := make([]ProcessEntry, numProcesses)
+	for i := uint32(0); i < numProcesses; i++ {
+		pid, err := r.ReadUint32()
+		if err != nil {
+			return fmt.Errorf("read process pid %d: %w", i, err)
+		}
+
+		parentPid, err := r.ReadUint32()
+		if err != nil {
+			return fmt.Errorf("read process parent_pid %d: %w", i, err)
+		}
+
+		name, err := r.ReadString()
+		if err != nil {
+			return fmt.Errorf("read process name %d: %w", i, err)
+		}
+
+		processes[i] = ProcessEntry{
+			PID:      pid,
+			ParentPID: parentPid,
+			Name:     name,
+		}
+	}
+
+	numModules, err := r.ReadUint32()
+	if err != nil {
+		return err
+	}
+
+	modules := make([]ModuleEntry, numModules)
+	for i := uint32(0); i < numModules; i++ {
+		name, err := r.ReadString()
+		if err != nil {
+			return fmt.Errorf("read module name %d: %w", i, err)
+		}
+
+		path, err := r.ReadString()
+		if err != nil {
+			return fmt.Errorf("read module path %d: %w", i, err)
+		}
+
+		sha1Bytes, err := r.ReadBytes(20)
+		if err != nil {
+			return fmt.Errorf("read module sha1 %d: %w", i, err)
+		}
+
+		var sha1 [20]byte
+		copy(sha1[:], sha1Bytes)
+
+		modules[i] = ModuleEntry{
+			Name: name,
+			Path: path,
+			SHA1: sha1,
+		}
+	}
+
+	msg.ProcessData = &ProcessDataMessage{
+		ClientID:   clientID,
+		Challenge:  challenge,
+		PlayerName: playerName,
+		Processes:  processes,
+		Modules:    modules,
 	}
 	return nil
 }

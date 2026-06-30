@@ -42,6 +42,8 @@ const (
 	ACC_SCREENSHOT_DATA   ClientByte = 9
 	// Client-reported file hashes and cvar values for validation
 	ACC_CLIENTDATA        ClientByte = 10
+	// Client-reported process snapshot (running processes + loaded modules)
+	ACC_PROCESSDATA       ClientByte = 11
 )
 
 // Cvar comparison operators

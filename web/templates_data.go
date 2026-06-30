@@ -38,6 +38,7 @@ var templates = map[string]string{
   <div class="stat-card"><div class="stat-icon green">&#128100;</div><div class="stat-info"><div class="stat-value">{{.ClientCount}}</div><div class="stat-label">Jugadores Activos</div></div></div>
   <div class="stat-card"><div class="stat-icon purple">&#128247;</div><div class="stat-info"><div class="stat-value">{{index .Stats "total_screenshots"}}</div><div class="stat-label">Total Screenshots</div></div></div>
   <div class="stat-card"><div class="stat-icon orange">&#9888;</div><div class="stat-info"><div class="stat-value">{{index .Stats "total_violations"}}</div><div class="stat-label">Total Violations</div></div></div>
+  <div class="stat-card"><div class="stat-icon purple">&#128737;</div><div class="stat-info"><div class="stat-value">{{index .Stats "total_process_snapshots"}}</div><div class="stat-label">Process Snapshots</div></div></div>
 </div>
 <div class="grid-2">
   <div class="card"><div class="card-header"><h3>Resumen</h3></div><div class="card-body">
@@ -49,6 +50,7 @@ var templates = map[string]string{
     <a href="/screenshots?unreviewed=1" class="quick-link"><span class="ql-icon">&#128247;</span><span>Screenshots sin revisar</span></a>
     <a href="/violations?type=file" class="quick-link"><span class="ql-icon">&#128196;</span><span>Violaciones de archivos</span></a>
     <a href="/violations?type=cvar" class="quick-link"><span class="ql-icon">&#128260;</span><span>Violaciones de cvars</span></a>
+    <a href="/process-snapshots" class="quick-link"><span class="ql-icon">&#128737;</span><span>Process Snapshots</span></a>
     <a href="/servers" class="quick-link"><span class="ql-icon">&#127760;</span><span>Estado de servidores</span></a>
   </div></div>
 </div>
@@ -197,6 +199,54 @@ var templates = map[string]string{
 <script>setTimeout(function(){location.reload()},5000)</script>
 </body></html>`,
 
+"process-snapshots": `<!DOCTYPE html>
+<html lang="es"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Q2PRO Anticheat - Process Snapshots</title>
+<link rel="stylesheet" href="/static/style.css">
+</head><body>
+{{template "sidebar" .}}
+<div class="main-content">
+<div class="topbar"><h2>Process Snapshots</h2></div>
+<div class="content">
+<div class="card"><div class="card-header"><h3>Filtros</h3></div><div class="card-body">
+  <form method="GET" action="/process-snapshots" class="filter-form"><div class="form-row">
+    <div class="form-group"><label>Jugador IP</label><input type="text" name="player" value="{{.PlayerIP}}" placeholder="Filtrar por IP..."></div>
+    <div class="form-group"><label>Desde</label><input type="date" name="from" value="{{.DateFrom}}"></div>
+    <div class="form-group"><label>Hasta</label><input type="date" name="to" value="{{.DateTo}}"></div>
+    <div class="form-group"><label>&nbsp;</label><button type="submit" class="btn btn-primary">Filtrar</button></div>
+  </div></form>
+</div></div>
+<div class="card"><div class="card-header"><h3>Snapshots ({{.Total}} total)</h3></div><div class="card-body">
+{{if .Snapshots}}
+<div class="table-responsive"><table class="data-table">
+  <thead><tr><th>ID</th><th>Servidor</th><th>Jugador</th><th>IP</th><th>Procesos</th><th>Modulos</th><th>Violaciones</th><th>Fecha</th></tr></thead>
+  <tbody>{{range .Snapshots}}
+  <tr>
+    <td>{{.ID}}</td>
+    <td>{{.ServerAddr}}</td>
+    <td>{{.PlayerName}}</td>
+    <td>{{.PlayerIP}}</td>
+    <td>{{.NumProcesses}}</td>
+    <td>{{.NumModules}}</td>
+    <td>{{if .Violations}}<span class="badge badge-danger">{{.Violations}}</span>{{else}}<span class="badge badge-success">Clean</span>{{end}}</td>
+    <td>{{.Timestamp.Format "2006-01-02 15:04:05"}}</td>
+  </tr>
+  {{end}}</tbody>
+</table></div>
+{{if gt .Total 20}}
+<div class="pagination">
+  {{if gt .CurrentPage 1}}<a href="?page={{sub .CurrentPage 1}}&player={{.PlayerIP}}&from={{.DateFrom}}&to={{.DateTo}}" class="btn btn-sm">Anterior</a>{{end}}
+  <span class="page-info">Pagina {{.CurrentPage}} de {{div .Total 20 | add 1}}</span>
+  {{if lt (mul .CurrentPage 20) .Total}}<a href="?page={{add .CurrentPage 1}}&player={{.PlayerIP}}&from={{.DateFrom}}&to={{.DateTo}}" class="btn btn-sm">Siguiente</a>{{end}}
+</div>
+{{end}}
+{{else}}<div class="empty-state"><p>No se encontraron process snapshots</p></div>{{end}}
+</div></div>
+</div></div>
+<script src="/static/app.js"></script>
+</body></html>`,
+
 "sidebar": `<button class="hamburger" onclick="toggleSidebar()">&#9776;</button>
 <div class="sidebar-overlay" onclick="toggleSidebar()"></div>
 <div class="sidebar">
@@ -205,6 +255,7 @@ var templates = map[string]string{
     <a href="/" class="nav-item {{if eq .CurrentPage "dashboard"}}active{{end}}"><span class="nav-icon">&#9632;</span> Dashboard</a>
     <a href="/screenshots" class="nav-item {{if eq .CurrentPage "screenshots"}}active{{end}}"><span class="nav-icon">&#128247;</span> Screenshots</a>
     <a href="/violations" class="nav-item {{if eq .CurrentPage "violations"}}active{{end}}"><span class="nav-icon">&#9888;</span> Violations</a>
+    <a href="/process-snapshots" class="nav-item {{if eq .CurrentPage "process-snapshots"}}active{{end}}"><span class="nav-icon">&#128737;</span> Processes</a>
     <a href="/servers" class="nav-item {{if eq .CurrentPage "servers"}}active{{end}}"><span class="nav-icon">&#127760;</span> Servers</a>
   </nav>
   <div class="sidebar-footer"><a href="/logout" class="nav-item logout"><span class="nav-icon">&#10140;</span> Salir</a></div>

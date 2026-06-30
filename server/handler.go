@@ -68,6 +68,9 @@ func (h *Handler) HandleMessage(gs *GameServer, buf []byte) {
 	case protocol.ACC_CLIENTDATA:
 		h.handleClientData(gs, msg.ClientData)
 
+	case protocol.ACC_PROCESSDATA:
+		h.handleProcessData(gs, msg.ProcessData)
+
 	default:
 		log.Printf("[HANDLER] Unknown message type %d from %s", msg.Type, gs.RemoteAddr)
 	}
@@ -351,6 +354,81 @@ func (h *Handler) handleClientData(gs *GameServer, cd *protocol.ClientDataMessag
 	if err := gs.SendClientAck(cd.ClientID, cd.Challenge, protocol.AC_TYPE_Q2PRO); err != nil {
 		log.Printf("[HANDLER] Error sending CLIENTACK to %s: %v", gs.RemoteAddr, err)
 	}
+}
+
+func (h *Handler) handleProcessData(gs *GameServer, pd *protocol.ProcessDataMessage) {
+	if pd == nil {
+		return
+	}
+
+	log.Printf("[HANDLER] Process data from %s: client=%d, %d processes, %d modules",
+		gs.RemoteAddr, pd.ClientID, len(pd.Processes), len(pd.Modules))
+
+	// Look up client info
+	client := gs.GetClient(pd.ClientID)
+	playerIP := ""
+	playerName := pd.PlayerName
+	if client != nil {
+		if client.IP != nil {
+			playerIP = client.IP.String()
+		}
+		if client.Name != "" {
+			playerName = client.Name
+		}
+	}
+
+	// Store process snapshot in database
+	if h.storage != nil && h.storage.DB() != nil {
+		_, err := h.storage.DB().InsertProcessSnapshot(
+			gs.Hostname, playerIP, playerName,
+			int(pd.ClientID), len(pd.Processes), len(pd.Modules),
+			formatProcessViolations(pd), nil)
+		if err != nil {
+			log.Printf("[HANDLER] Error storing process snapshot: %v", err)
+		}
+	}
+}
+
+// formatProcessViolations creates a summary string of any suspicious processes/modules
+func formatProcessViolations(pd *protocol.ProcessDataMessage) string {
+	var violations []string
+
+	// Check for known cheat process names
+	suspiciousProcs := []string{
+		"aimbot", "wallhack", "cheat", "inject", "hook",
+		"trainer", "hack", "speedhack", "noclip",
+	}
+
+	for _, proc := range pd.Processes {
+		name := strings.ToLower(proc.Name)
+		for _, suspicious := range suspiciousProcs {
+			if strings.Contains(name, suspicious) {
+				violations = append(violations, fmt.Sprintf("suspicious process: %s (pid=%d)", proc.Name, proc.PID))
+				break
+			}
+		}
+	}
+
+	// Check for known cheat module names
+	suspiciousMods := []string{
+		"cheat", "hack", "inject", "hook", "overlay",
+		"trainer", "speedhack", "aimbot", "wallhack",
+	}
+
+	for _, mod := range pd.Modules {
+		name := strings.ToLower(mod.Name)
+		for _, suspicious := range suspiciousMods {
+			if strings.Contains(name, suspicious) {
+				violations = append(violations, fmt.Sprintf("suspicious module: %s", mod.Name))
+				break
+			}
+		}
+	}
+
+	if len(violations) == 0 {
+		return ""
+	}
+	return strings.Join(violations, "; ")
 }
 
 // compareCvar checks a client's cvar value against expected check rules.

@@ -52,6 +52,7 @@ func (ws *WebServer) routes() {
 	ws.mux.Handle("/screenshots/review", ws.authMiddleware(http.HandlerFunc(ws.handleReviewScreenshot)))
 	ws.mux.Handle("/screenshots/image/", ws.authMiddleware(http.HandlerFunc(ws.handleScreenshotImage)))
 	ws.mux.Handle("/violations", ws.authMiddleware(http.HandlerFunc(ws.handleViolations)))
+	ws.mux.Handle("/process-snapshots", ws.authMiddleware(http.HandlerFunc(ws.handleProcessSnapshots)))
 	ws.mux.Handle("/servers", ws.authMiddleware(http.HandlerFunc(ws.handleServers)))
 	ws.mux.Handle("/api/stats", ws.authMiddleware(http.HandlerFunc(ws.handleAPIStats)))
 }
@@ -252,6 +253,32 @@ func (ws *WebServer) handleViolations(w http.ResponseWriter, r *http.Request) {
 		"CurrentPage": "violations",
 	}
 	ws.templates.Execute(w, "violations", data)
+}
+
+func (ws *WebServer) handleProcessSnapshots(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	playerIP := r.URL.Query().Get("player")
+	dateFrom := r.URL.Query().Get("from")
+	dateTo := r.URL.Query().Get("to")
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+
+	snapshots, total, err := ws.db.GetProcessSnapshots(playerIP, dateFrom, dateTo, page, 20)
+	if err != nil {
+		log.Printf("[WEB] Error getting process snapshots: %v", err)
+	}
+
+	data := map[string]interface{}{
+		"Snapshots":   snapshots,
+		"Total":       total,
+		"CurrentPage": "process-snapshots",
+		"PlayerIP":    playerIP,
+		"DateFrom":    dateFrom,
+		"DateTo":      dateTo,
+	}
+	ws.templates.Execute(w, "process-snapshots", data)
 }
 
 func (ws *WebServer) handleServers(w http.ResponseWriter, r *http.Request) {

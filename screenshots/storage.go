@@ -29,6 +29,11 @@ func NewStorage(baseDir string, db *database.DB) (*Storage, error) {
 	}, nil
 }
 
+// DB returns the underlying database connection
+func (s *Storage) DB() *database.DB {
+	return s.db
+}
+
 // SaveScreenshot saves a JPEG screenshot to disk and stores metadata in DB
 func (s *Storage) SaveScreenshot(serverAddr, playerIP, playerName string,
 	clientID uint32, width, height int, jpegData []byte) (string, error) {
