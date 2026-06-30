@@ -269,10 +269,13 @@ func (ws *WebServer) handleProcessSnapshots(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		log.Printf("[WEB] Error getting process snapshots: %v", err)
 	}
+	totalPages := (total + 19) / 20
 
 	data := map[string]interface{}{
 		"Snapshots":   snapshots,
 		"Total":       total,
+		"TotalPages":  totalPages,
+		"HasNext":     page < totalPages,
 		"CurrentPage": "process-snapshots",
 		"PlayerIP":    playerIP,
 		"DateFrom":    dateFrom,

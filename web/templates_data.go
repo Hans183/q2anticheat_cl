@@ -237,8 +237,8 @@ var templates = map[string]string{
 {{if gt .Total 20}}
 <div class="pagination">
   {{if gt .CurrentPage 1}}<a href="?page={{sub .CurrentPage 1}}&player={{.PlayerIP}}&from={{.DateFrom}}&to={{.DateTo}}" class="btn btn-sm">Anterior</a>{{end}}
-  <span class="page-info">Pagina {{.CurrentPage}} de {{div .Total 20 | add 1}}</span>
-  {{if lt (mul .CurrentPage 20) .Total}}<a href="?page={{add .CurrentPage 1}}&player={{.PlayerIP}}&from={{.DateFrom}}&to={{.DateTo}}" class="btn btn-sm">Siguiente</a>{{end}}
+  <span class="page-info">Pagina {{.CurrentPage}} de {{.TotalPages}}</span>
+  {{if .HasNext}}<a href="?page={{add .CurrentPage 1}}&player={{.PlayerIP}}&from={{.DateFrom}}&to={{.DateTo}}" class="btn btn-sm">Siguiente</a>{{end}}
 </div>
 {{end}}
 {{else}}<div class="empty-state"><p>No se encontraron process snapshots</p></div>{{end}}
