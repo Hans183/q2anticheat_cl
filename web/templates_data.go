@@ -265,10 +265,20 @@ var templates = map[string]string{
 .row-suspicious td { color: #ef4444; font-weight: 500; }
 .badge-suspicious { background: #ef4444; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
 .section-title { font-size: 16px; font-weight: 600; margin: 20px 0 10px 0; color: #e2e8f0; }
-.snapshot-info { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 20px; }
+.snapshot-info { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 16px; }
 .info-item { background: #1a1d29; padding: 12px 16px; border-radius: 8px; }
 .info-label { font-size: 12px; color: #8b95a5; text-transform: uppercase; margin-bottom: 4px; }
 .info-value { font-size: 14px; color: #e2e8f0; font-weight: 500; }
+.violations-summary { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; padding: 10px 16px; margin-bottom: 20px; display: flex; align-items: center; gap: 8px; }
+.violations-summary .count { color: #ef4444; font-weight: 600; font-size: 14px; }
+.violations-summary .label { color: #f87171; font-size: 13px; }
+.violations-list { background: #1a1d29; border-radius: 8px; padding: 16px; margin-bottom: 20px; }
+.violation-item { padding: 8px 0; border-bottom: 1px solid #2a2d3a; font-size: 13px; color: #e2e8f0; display: flex; align-items: flex-start; gap: 8px; }
+.violation-item:last-child { border-bottom: none; }
+.violation-icon { color: #ef4444; font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+.violation-text { line-height: 1.4; }
+.violation-name { color: #f87171; font-weight: 500; }
+.violation-detail { color: #8b95a5; font-size: 12px; }
 </style>
 </head><body>
 {{template "sidebar" .}}
@@ -286,8 +296,22 @@ var templates = map[string]string{
     <div class="info-item"><div class="info-label">Fecha</div><div class="info-value">{{.Snapshot.Timestamp.Format "2006-01-02 15:04:05"}}</div></div>
     <div class="info-item"><div class="info-label">Total Procesos</div><div class="info-value">{{.Snapshot.NumProcesses}}</div></div>
     <div class="info-item"><div class="info-label">Total Modulos</div><div class="info-value">{{.Snapshot.NumModules}}</div></div>
-    {{if .Snapshot.Violations}}<div class="info-item" style="border-left: 3px solid #ef4444"><div class="info-label">Violaciones</div><div class="info-value" style="color:#ef4444">{{.Snapshot.Violations}}</div></div>{{end}}
   </div>
+
+  {{if .Snapshot.Violations}}
+  <div class="violations-summary">
+    <span class="count">&#9888; {{violationsCount .Snapshot.Violations}} violaciones detectadas</span>
+  </div>
+  <div class="section-title">Violaciones</div>
+  <div class="violations-list">
+    {{range violationsList .Snapshot.Violations}}
+    <div class="violation-item">
+      <span class="violation-icon">&#9679;</span>
+      <div class="violation-text">{{.}}</div>
+    </div>
+    {{end}}
+  </div>
+  {{end}}
 
   <div class="section-title">Procesos</div>
   {{if .Processes}}
