@@ -324,59 +324,71 @@ var templates = map[string]string{
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Q2PRO Anticheat - Blacklist</title>
 <link rel="stylesheet" href="/static/style.css">
+<style>
+.toggle-btn { border: none; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 500; }
+.toggle-active { background: #22c55e; color: white; }
+.toggle-inactive { background: #6b7280; color: white; }
+.badge-hardcoded { background: #3b82f6; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+.badge-user { background: #8b5cf6; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+.row-disabled { opacity: 0.5; }
+</style>
 </head><body>
 {{template "sidebar" .}}
 <div class="main-content">
 <div class="topbar"><h2>Blacklist</h2></div>
 <div class="content">
 <div class="stats-grid">
-  <div class="stat-card"><div class="stat-icon red">&#9888;</div><div class="stat-info"><div class="stat-value">{{.ProcessCount}}</div><div class="stat-label">Patrones de Procesos</div></div></div>
-  <div class="stat-card"><div class="stat-icon orange">&#128737;</div><div class="stat-info"><div class="stat-value">{{.ModuleCount}}</div><div class="stat-label">Patrones de Modulos</div></div></div>
-  <div class="stat-card"><div class="stat-icon blue">&#128196;</div><div class="stat-info"><div class="stat-value">{{.DBCount}}</div><div class="stat-label">Personalizados (DB)</div></div></div>
+  <div class="stat-card"><div class="stat-icon red">&#9888;</div><div class="stat-info"><div class="stat-value">{{.ProcessCount}}</div><div class="stat-label">Patrones Activos (Procesos)</div></div></div>
+  <div class="stat-card"><div class="stat-icon orange">&#128737;</div><div class="stat-info"><div class="stat-value">{{.ModuleCount}}</div><div class="stat-label">Patrones Activos (Modulos)</div></div></div>
+  <div class="stat-card"><div class="stat-icon blue">&#128196;</div><div class="stat-info"><div class="stat-value">{{.TotalEntries}}</div><div class="stat-label">Total Patrones</div></div></div>
 </div>
-<div class="grid-2">
-  <div class="card"><div class="card-header"><h3>Agregar Patron</h3></div><div class="card-body">
-    <form method="POST" action="/blacklist">
-      <input type="hidden" name="action" value="add">
-      <div class="form-group"><label>Tipo</label>
-        <select name="type" required><option value="process">Proceso</option><option value="module">Modulo</option></select>
-      </div>
-      <div class="form-group"><label>Patron (substring)</label>
-        <input type="text" name="pattern" required placeholder="ej: cheatengine">
-      </div>
-      <div class="form-group"><label>Agregado por</label>
-        <input type="text" name="added_by" value="admin" placeholder="admin">
-      </div>
-      <button type="submit" class="btn btn-primary">Agregar</button>
-    </form>
-  </div></div>
-  <div class="card"><div class="card-header"><h3>Patrones Hardcoded</h3></div><div class="card-body">
-    <p style="color:#8b95a5;font-size:13px">Hay {{.ProcessCount}} patrones de procesos y {{.ModuleCount}} patrones de modulos hardcodeados en el codigo fuente.</p>
-    <p style="color:#8b95a5;font-size:13px;margin-top:8px">Estos no se pueden eliminar desde aqui. Solo los patrones personalizados (DB) aparecen abajo.</p>
-  </div></div>
-</div>
-<div class="card"><div class="card-header"><h3>Patrones Personalizados ({{.DBCount}})</h3></div><div class="card-body">
+<div class="card"><div class="card-header"><h3>Agregar Patron Personalizado</h3></div><div class="card-body">
+  <form method="POST" action="/blacklist" class="filter-form"><div class="form-row">
+    <div class="form-group"><label>Tipo</label>
+      <select name="type" required><option value="process">Proceso</option><option value="module">Modulo</option></select>
+    </div>
+    <div class="form-group"><label>Patron (substring)</label>
+      <input type="text" name="pattern" required placeholder="ej: cheatengine">
+    </div>
+    <div class="form-group"><label>Agregado por</label>
+      <input type="text" name="added_by" value="admin" placeholder="admin">
+    </div>
+    <div class="form-group"><label>&nbsp;</label><button type="submit" class="btn btn-primary">Agregar</button></div>
+  </div></form>
+</div></div>
+<div class="card"><div class="card-header"><h3>Todos los Patrones ({{.TotalEntries}})</h3></div><div class="card-body">
 {{if .Entries}}
 <div class="table-responsive"><table class="data-table">
-  <thead><tr><th>ID</th><th>Tipo</th><th>Patron</th><th>Agregado por</th><th>Fecha</th><th>Acciones</th></tr></thead>
+  <thead><tr><th>ID</th><th>Tipo</th><th>Patron</th><th>Fuente</th><th>Estado</th><th>Agregado por</th><th>Acciones</th></tr></thead>
   <tbody>{{range .Entries}}
-  <tr>
+  <tr{{if not .Enabled}} class="row-disabled"{{end}}>
     <td>{{.ID}}</td>
     <td><span class="badge {{if eq .Type "process"}}badge-danger{{else}}badge-warning{{end}}">{{.Type}}</span></td>
     <td><code>{{.Pattern}}</code></td>
-    <td>{{.AddedBy}}</td>
-    <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+    <td>{{if eq .Source "hardcoded"}}<span class="badge-hardcoded">hardcoded</span>{{else}}<span class="badge-user">user</span>{{end}}</td>
     <td>
+      <form method="POST" action="/blacklist" style="display:inline">
+        <input type="hidden" name="action" value="toggle">
+        <input type="hidden" name="id" value="{{.ID}}">
+        <button type="submit" class="toggle-btn {{if .Enabled}}toggle-active{{else}}toggle-inactive{{end}}">
+          {{if .Enabled}}Activo{{else}}Inactivo{{end}}
+        </button>
+      </form>
+    </td>
+    <td>{{.AddedBy}}</td>
+    <td>
+      {{if eq .Source "user"}}
       <form method="POST" action="/blacklist" style="display:inline" onsubmit="return confirm('Eliminar este patron?')">
         <input type="hidden" name="action" value="delete">
         <input type="hidden" name="id" value="{{.ID}}">
         <button type="submit" class="btn btn-sm btn-danger">Eliminar</button>
       </form>
+      {{else}}<span style="color:#6b7280;font-size:12px">Sistema</span>{{end}}
     </td>
   </tr>
   {{end}}</tbody>
 </table></div>
-{{else}}<div class="empty-state"><p>No hay patrones personalizados</p></div>{{end}}
+{{else}}<div class="empty-state"><p>No hay patrones en la blacklist</p></div>{{end}}
 </div></div>
 </div></div>
 <script src="/static/app.js"></script>

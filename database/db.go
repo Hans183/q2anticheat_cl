@@ -82,6 +82,8 @@ type BlacklistEntry struct {
 	ID        int64
 	Type      string
 	Pattern   string
+	Source    string // "hardcoded" or "user"
+	Enabled   bool
 	AddedBy   string
 	CreatedAt time.Time
 }
@@ -196,6 +198,8 @@ func (db *DB) migrate() error {
 		id         INTEGER PRIMARY KEY AUTOINCREMENT,
 		type       TEXT NOT NULL CHECK(type IN ('process', 'module')),
 		pattern    TEXT NOT NULL,
+		source     TEXT NOT NULL DEFAULT 'user',
+		enabled    BOOLEAN NOT NULL DEFAULT 1,
 		added_by   TEXT NOT NULL DEFAULT 'admin',
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		UNIQUE(type, pattern)
@@ -228,6 +232,20 @@ func (db *DB) migrateColumns() {
 	if !hasColumn {
 		db.conn.Exec("ALTER TABLE process_snapshots ADD COLUMN modules_json TEXT")
 		log.Printf("[DB] Migrated: added modules_json column")
+	}
+
+	// Add source to blacklist if missing
+	db.conn.QueryRow("SELECT COUNT(*) FROM pragma_table_info('blacklist') WHERE name='source'").Scan(&hasColumn)
+	if !hasColumn {
+		db.conn.Exec("ALTER TABLE blacklist ADD COLUMN source TEXT NOT NULL DEFAULT 'user'")
+		log.Printf("[DB] Migrated: added source column to blacklist")
+	}
+
+	// Add enabled to blacklist if missing
+	db.conn.QueryRow("SELECT COUNT(*) FROM pragma_table_info('blacklist') WHERE name='enabled'").Scan(&hasColumn)
+	if !hasColumn {
+		db.conn.Exec("ALTER TABLE blacklist ADD COLUMN enabled BOOLEAN NOT NULL DEFAULT 1")
+		log.Printf("[DB] Migrated: added enabled column to blacklist")
 	}
 }
 
@@ -678,7 +696,7 @@ func scanProcessSnapshots(rows *sql.Rows) ([]*ProcessSnapshotRecord, error) {
 
 // GetBlacklist retrieves all blacklist entries
 func (db *DB) GetBlacklist() ([]BlacklistEntry, error) {
-	rows, err := db.conn.Query("SELECT id, type, pattern, added_by, created_at FROM blacklist ORDER BY type, pattern")
+	rows, err := db.conn.Query("SELECT id, type, pattern, source, enabled, added_by, created_at FROM blacklist ORDER BY source DESC, type, pattern")
 	if err != nil {
 		return nil, fmt.Errorf("query blacklist: %w", err)
 	}
@@ -688,7 +706,7 @@ func (db *DB) GetBlacklist() ([]BlacklistEntry, error) {
 	for rows.Next() {
 		e := BlacklistEntry{}
 		var ts string
-		if err := rows.Scan(&e.ID, &e.Type, &e.Pattern, &e.AddedBy, &ts); err != nil {
+		if err := rows.Scan(&e.ID, &e.Type, &e.Pattern, &e.Source, &e.Enabled, &e.AddedBy, &ts); err != nil {
 			return nil, err
 		}
 		e.CreatedAt = parseTimestamp(ts)
@@ -700,7 +718,7 @@ func (db *DB) GetBlacklist() ([]BlacklistEntry, error) {
 // AddBlacklistEntry adds a new blacklist entry
 func (db *DB) AddBlacklistEntry(entryType, pattern, addedBy string) error {
 	_, err := db.conn.Exec(
-		"INSERT OR IGNORE INTO blacklist (type, pattern, added_by) VALUES (?, ?, ?)",
+		"INSERT OR IGNORE INTO blacklist (type, pattern, source, added_by) VALUES (?, ?, 'user', ?)",
 		entryType, pattern, addedBy)
 	if err != nil {
 		return fmt.Errorf("insert blacklist entry: %w", err)
@@ -708,11 +726,33 @@ func (db *DB) AddBlacklistEntry(entryType, pattern, addedBy string) error {
 	return nil
 }
 
-// RemoveBlacklistEntry removes a blacklist entry by ID
+// RemoveBlacklistEntry removes a blacklist entry by ID (only user entries)
 func (db *DB) RemoveBlacklistEntry(id int64) error {
-	_, err := db.conn.Exec("DELETE FROM blacklist WHERE id = ?", id)
+	_, err := db.conn.Exec("DELETE FROM blacklist WHERE id = ? AND source = 'user'", id)
 	if err != nil {
 		return fmt.Errorf("delete blacklist entry: %w", err)
+	}
+	return nil
+}
+
+// ToggleBlacklistEntry toggles the enabled state of a blacklist entry
+func (db *DB) ToggleBlacklistEntry(id int64) error {
+	_, err := db.conn.Exec("UPDATE blacklist SET enabled = NOT enabled WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("toggle blacklist entry: %w", err)
+	}
+	return nil
+}
+
+// EnsureHardcodedEntries inserts hardcoded patterns if they don't exist
+func (db *DB) EnsureHardcodedEntries(entries []BlacklistEntry) error {
+	for _, e := range entries {
+		_, err := db.conn.Exec(
+			"INSERT OR IGNORE INTO blacklist (type, pattern, source, enabled, added_by) VALUES (?, ?, 'hardcoded', ?, 'system')",
+			e.Type, e.Pattern, e.Enabled)
+		if err != nil {
+			log.Printf("[DB] Warning: failed to ensure hardcoded entry %s: %v", e.Pattern, err)
+		}
 	}
 	return nil
 }

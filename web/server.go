@@ -383,19 +383,27 @@ func (ws *WebServer) handleBlacklist(w http.ResponseWriter, r *http.Request) {
 					log.Printf("[WEB] Error removing blacklist entry: %v", err)
 				}
 			}
+		case "toggle":
+			idStr := r.FormValue("id")
+			id, err := strconv.ParseInt(idStr, 10, 64)
+			if err == nil && id > 0 {
+				if err := ws.handler.Blacklist().ToggleEntry(id); err != nil {
+					log.Printf("[WEB] Error toggling blacklist entry: %v", err)
+				}
+			}
 		}
 		http.Redirect(w, r, "/blacklist", http.StatusFound)
 		return
 	}
 
-	entries := ws.handler.Blacklist().GetDBEntries()
-	processCount, moduleCount, dbCount := ws.handler.Blacklist().Stats()
+	entries := ws.handler.Blacklist().GetAllEntries()
+	processCount, moduleCount, totalEntries := ws.handler.Blacklist().Stats()
 
 	data := map[string]interface{}{
 		"Entries":      entries,
 		"ProcessCount": processCount,
 		"ModuleCount":  moduleCount,
-		"DBCount":      dbCount,
+		"TotalEntries": totalEntries,
 		"CurrentPage":  "blacklist",
 	}
 	ws.templates.Execute(w, "blacklist", data)
