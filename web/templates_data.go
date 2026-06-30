@@ -222,7 +222,7 @@ var templates = map[string]string{
 <div class="table-responsive"><table class="data-table">
   <thead><tr><th>ID</th><th>Servidor</th><th>Jugador</th><th>IP</th><th>Procesos</th><th>Modulos</th><th>Violaciones</th><th>Fecha</th></tr></thead>
   <tbody>{{range .Snapshots}}
-  <tr>
+  <tr class="clickable-row" onclick="location.href='/process-snapshots/{{.ID}}'" style="cursor:pointer">
     <td>{{.ID}}</td>
     <td>{{.ServerAddr}}</td>
     <td>{{.PlayerName}}</td>
@@ -234,14 +234,149 @@ var templates = map[string]string{
   </tr>
   {{end}}</tbody>
 </table></div>
-{{if gt .Total 20}}
+{{if gt .TotalPages 1}}
 <div class="pagination">
-  {{if gt .CurrentPage 1}}<a href="?page={{sub .CurrentPage 1}}&player={{.PlayerIP}}&from={{.DateFrom}}&to={{.DateTo}}" class="btn btn-sm">Anterior</a>{{end}}
-  <span class="page-info">Pagina {{.CurrentPage}} de {{.TotalPages}}</span>
-  {{if .HasNext}}<a href="?page={{add .CurrentPage 1}}&player={{.PlayerIP}}&from={{.DateFrom}}&to={{.DateTo}}" class="btn btn-sm">Siguiente</a>{{end}}
+  {{if gt .Page 1}}<a href="?page={{sub .Page 1}}&player={{.PlayerIP}}&from={{.DateFrom}}&to={{.DateTo}}" class="btn btn-sm">Anterior</a>{{end}}
+  <span class="page-info">Pagina {{.Page}} de {{.TotalPages}}</span>
+  {{if .HasNext}}<a href="?page={{add .Page 1}}&player={{.PlayerIP}}&from={{.DateFrom}}&to={{.DateTo}}" class="btn btn-sm">Siguiente</a>{{end}}
 </div>
 {{end}}
 {{else}}<div class="empty-state"><p>No se encontraron process snapshots</p></div>{{end}}
+</div></div>
+</div></div>
+<script src="/static/app.js"></script>
+</body></html>`,
+
+"process-snapshot-detail": `<!DOCTYPE html>
+<html lang="es"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Q2PRO Anticheat - Process Snapshot Detail</title>
+<link rel="stylesheet" href="/static/style.css">
+<style>
+.process-table, .module-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+.process-table th, .module-table th { background: #1a1d29; color: #8b95a5; padding: 10px 12px; text-align: left; font-size: 12px; text-transform: uppercase; }
+.process-table td, .module-table td { padding: 8px 12px; border-bottom: 1px solid #2a2d3a; font-size: 13px; }
+.process-table tr:hover, .module-table tr:hover { background: #1e2130; }
+.row-suspicious { background: rgba(239, 68, 68, 0.1) !important; }
+.row-suspicious td { color: #ef4444; font-weight: 500; }
+.badge-suspicious { background: #ef4444; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+.section-title { font-size: 16px; font-weight: 600; margin: 20px 0 10px 0; color: #e2e8f0; }
+.snapshot-info { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 20px; }
+.info-item { background: #1a1d29; padding: 12px 16px; border-radius: 8px; }
+.info-label { font-size: 12px; color: #8b95a5; text-transform: uppercase; margin-bottom: 4px; }
+.info-value { font-size: 14px; color: #e2e8f0; font-weight: 500; }
+</style>
+</head><body>
+{{template "sidebar" .}}
+<div class="main-content">
+<div class="topbar"><h2>Process Snapshot #{{.Snapshot.ID}}</h2></div>
+<div class="content">
+<div class="card"><div class="card-header">
+  <h3>Detalle del Snapshot</h3>
+  <a href="/process-snapshots" class="btn btn-sm">Volver</a>
+</div><div class="card-body">
+  <div class="snapshot-info">
+    <div class="info-item"><div class="info-label">Jugador</div><div class="info-value">{{.Snapshot.PlayerName}}</div></div>
+    <div class="info-item"><div class="info-label">IP</div><div class="info-value">{{.Snapshot.PlayerIP}}</div></div>
+    <div class="info-item"><div class="info-label">Servidor</div><div class="info-value">{{.Snapshot.ServerAddr}}</div></div>
+    <div class="info-item"><div class="info-label">Fecha</div><div class="info-value">{{.Snapshot.Timestamp.Format "2006-01-02 15:04:05"}}</div></div>
+    <div class="info-item"><div class="info-label">Total Procesos</div><div class="info-value">{{.Snapshot.NumProcesses}}</div></div>
+    <div class="info-item"><div class="info-label">Total Modulos</div><div class="info-value">{{.Snapshot.NumModules}}</div></div>
+    {{if .Snapshot.Violations}}<div class="info-item" style="border-left: 3px solid #ef4444"><div class="info-label">Violaciones</div><div class="info-value" style="color:#ef4444">{{.Snapshot.Violations}}</div></div>{{end}}
+  </div>
+
+  <div class="section-title">Procesos</div>
+  {{if .Processes}}
+  <div class="table-responsive"><table class="process-table">
+    <thead><tr><th>PID</th><th>PID Padre</th><th>Nombre</th><th>Estado</th></tr></thead>
+    <tbody>{{range .Processes}}
+    <tr{{if .Suspicious}} class="row-suspicious"{{end}}>
+      <td>{{.PID}}</td>
+      <td>{{.ParentPID}}</td>
+      <td>{{.Name}}{{if .Suspicious}} <span class="badge-suspicious">{{.MatchPattern}}</span>{{end}}</td>
+      <td>{{if .Suspicious}}<span style="color:#ef4444">SOSPECHOSO</span>{{else}}<span style="color:#22c55e">LIMPIO</span>{{end}}</td>
+    </tr>
+    {{end}}</tbody>
+  </table></div>
+  {{else}}<p style="color:#8b95a5">No hay datos de procesos</p>{{end}}
+
+  <div class="section-title">Modulos</div>
+  {{if .Modules}}
+  <div class="table-responsive"><table class="module-table">
+    <thead><tr><th>Nombre</th><th>Ruta</th><th>SHA1</th><th>Estado</th></tr></thead>
+    <tbody>{{range .Modules}}
+    <tr{{if .Suspicious}} class="row-suspicious"{{end}}>
+      <td>{{.Name}}{{if .Suspicious}} <span class="badge-suspicious">{{.MatchPattern}}</span>{{end}}</td>
+      <td style="font-size:11px;color:#8b95a5">{{.Path}}</td>
+      <td style="font-family:monospace;font-size:11px">{{.SHA1}}</td>
+      <td>{{if .Suspicious}}<span style="color:#ef4444">SOSPECHOSO</span>{{else}}<span style="color:#22c55e">LIMPIO</span>{{end}}</td>
+    </tr>
+    {{end}}</tbody>
+  </table></div>
+  {{else}}<p style="color:#8b95a5">No hay datos de modulos</p>{{end}}
+</div></div>
+</div></div>
+<script src="/static/app.js"></script>
+</body></html>`,
+
+"blacklist": `<!DOCTYPE html>
+<html lang="es"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Q2PRO Anticheat - Blacklist</title>
+<link rel="stylesheet" href="/static/style.css">
+</head><body>
+{{template "sidebar" .}}
+<div class="main-content">
+<div class="topbar"><h2>Blacklist</h2></div>
+<div class="content">
+<div class="stats-grid">
+  <div class="stat-card"><div class="stat-icon red">&#9888;</div><div class="stat-info"><div class="stat-value">{{.ProcessCount}}</div><div class="stat-label">Patrones de Procesos</div></div></div>
+  <div class="stat-card"><div class="stat-icon orange">&#128737;</div><div class="stat-info"><div class="stat-value">{{.ModuleCount}}</div><div class="stat-label">Patrones de Modulos</div></div></div>
+  <div class="stat-card"><div class="stat-icon blue">&#128196;</div><div class="stat-info"><div class="stat-value">{{.DBCount}}</div><div class="stat-label">Personalizados (DB)</div></div></div>
+</div>
+<div class="grid-2">
+  <div class="card"><div class="card-header"><h3>Agregar Patron</h3></div><div class="card-body">
+    <form method="POST" action="/blacklist">
+      <input type="hidden" name="action" value="add">
+      <div class="form-group"><label>Tipo</label>
+        <select name="type" required><option value="process">Proceso</option><option value="module">Modulo</option></select>
+      </div>
+      <div class="form-group"><label>Patron (substring)</label>
+        <input type="text" name="pattern" required placeholder="ej: cheatengine">
+      </div>
+      <div class="form-group"><label>Agregado por</label>
+        <input type="text" name="added_by" value="admin" placeholder="admin">
+      </div>
+      <button type="submit" class="btn btn-primary">Agregar</button>
+    </form>
+  </div></div>
+  <div class="card"><div class="card-header"><h3>Patrones Hardcoded</h3></div><div class="card-body">
+    <p style="color:#8b95a5;font-size:13px">Hay {{.ProcessCount}} patrones de procesos y {{.ModuleCount}} patrones de modulos hardcodeados en el codigo fuente.</p>
+    <p style="color:#8b95a5;font-size:13px;margin-top:8px">Estos no se pueden eliminar desde aqui. Solo los patrones personalizados (DB) aparecen abajo.</p>
+  </div></div>
+</div>
+<div class="card"><div class="card-header"><h3>Patrones Personalizados ({{.DBCount}})</h3></div><div class="card-body">
+{{if .Entries}}
+<div class="table-responsive"><table class="data-table">
+  <thead><tr><th>ID</th><th>Tipo</th><th>Patron</th><th>Agregado por</th><th>Fecha</th><th>Acciones</th></tr></thead>
+  <tbody>{{range .Entries}}
+  <tr>
+    <td>{{.ID}}</td>
+    <td><span class="badge {{if eq .Type "process"}}badge-danger{{else}}badge-warning{{end}}">{{.Type}}</span></td>
+    <td><code>{{.Pattern}}</code></td>
+    <td>{{.AddedBy}}</td>
+    <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+    <td>
+      <form method="POST" action="/blacklist" style="display:inline" onsubmit="return confirm('Eliminar este patron?')">
+        <input type="hidden" name="action" value="delete">
+        <input type="hidden" name="id" value="{{.ID}}">
+        <button type="submit" class="btn btn-sm btn-danger">Eliminar</button>
+      </form>
+    </td>
+  </tr>
+  {{end}}</tbody>
+</table></div>
+{{else}}<div class="empty-state"><p>No hay patrones personalizados</p></div>{{end}}
 </div></div>
 </div></div>
 <script src="/static/app.js"></script>
@@ -256,6 +391,7 @@ var templates = map[string]string{
     <a href="/screenshots" class="nav-item {{if eq .CurrentPage "screenshots"}}active{{end}}"><span class="nav-icon">&#128247;</span> Screenshots</a>
     <a href="/violations" class="nav-item {{if eq .CurrentPage "violations"}}active{{end}}"><span class="nav-icon">&#9888;</span> Violations</a>
     <a href="/process-snapshots" class="nav-item {{if eq .CurrentPage "process-snapshots"}}active{{end}}"><span class="nav-icon">&#128737;</span> Processes</a>
+    <a href="/blacklist" class="nav-item {{if eq .CurrentPage "blacklist"}}active{{end}}"><span class="nav-icon">&#128683;</span> Blacklist</a>
     <a href="/servers" class="nav-item {{if eq .CurrentPage "servers"}}active{{end}}"><span class="nav-icon">&#127760;</span> Servers</a>
   </nav>
   <div class="sidebar-footer"><a href="/logout" class="nav-item logout"><span class="nav-icon">&#10140;</span> Salir</a></div>

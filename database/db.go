@@ -63,16 +63,27 @@ type SessionRecord struct {
 
 // ProcessSnapshotRecord represents a stored process snapshot
 type ProcessSnapshotRecord struct {
-	ID           int64
-	ServerAddr   string
-	PlayerIP     string
-	PlayerName   string
-	ClientID     int
-	NumProcesses int
-	NumModules   int
-	Violations   string
-	RawData      []byte
-	Timestamp    time.Time
+	ID            int64
+	ServerAddr    string
+	PlayerIP      string
+	PlayerName    string
+	ClientID      int
+	NumProcesses  int
+	NumModules    int
+	Violations    string
+	ProcessesJSON string
+	ModulesJSON   string
+	RawData       []byte
+	Timestamp     time.Time
+}
+
+// BlacklistEntry represents a blacklist pattern
+type BlacklistEntry struct {
+	ID        int64
+	Type      string
+	Pattern   string
+	AddedBy   string
+	CreatedAt time.Time
 }
 
 // parseTimestamp tries multiple formats to parse a timestamp string from SQLite.
@@ -180,10 +191,44 @@ func (db *DB) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_process_snapshots_player ON process_snapshots(player_ip);
 	CREATE INDEX IF NOT EXISTS idx_process_snapshots_date ON process_snapshots(timestamp);
 	CREATE INDEX IF NOT EXISTS idx_process_snapshots_server ON process_snapshots(server_addr);
+
+	CREATE TABLE IF NOT EXISTS blacklist (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		type       TEXT NOT NULL CHECK(type IN ('process', 'module')),
+		pattern    TEXT NOT NULL,
+		added_by   TEXT NOT NULL DEFAULT 'admin',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(type, pattern)
+	);
 	`
 
 	_, err := db.conn.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Migrations for existing databases
+	db.migrateColumns()
+
+	return nil
+}
+
+// migrateColumns adds missing columns to existing tables
+func (db *DB) migrateColumns() {
+	// Add processes_json to process_snapshots if missing
+	var hasColumn bool
+	db.conn.QueryRow("SELECT COUNT(*) FROM pragma_table_info('process_snapshots') WHERE name='processes_json'").Scan(&hasColumn)
+	if !hasColumn {
+		db.conn.Exec("ALTER TABLE process_snapshots ADD COLUMN processes_json TEXT")
+		log.Printf("[DB] Migrated: added processes_json column")
+	}
+
+	// Add modules_json to process_snapshots if missing
+	db.conn.QueryRow("SELECT COUNT(*) FROM pragma_table_info('process_snapshots') WHERE name='modules_json'").Scan(&hasColumn)
+	if !hasColumn {
+		db.conn.Exec("ALTER TABLE process_snapshots ADD COLUMN modules_json TEXT")
+		log.Printf("[DB] Migrated: added modules_json column")
+	}
 }
 
 // EnsureDefaultAdmin creates the default admin user if none exists
@@ -511,17 +556,49 @@ func (db *DB) GetStats() (map[string]interface{}, error) {
 
 // InsertProcessSnapshot stores a new process snapshot record
 func (db *DB) InsertProcessSnapshot(serverAddr, playerIP, playerName string,
-	clientID, numProcesses, numModules int, violations string, rawData []byte) (int64, error) {
+	clientID, numProcesses, numModules int, violations, processesJSON, modulesJSON string) (int64, error) {
 	result, err := db.conn.Exec(`
 		INSERT INTO process_snapshots (server_addr, player_ip, player_name, client_id,
-			num_processes, num_modules, violations, raw_data, timestamp)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			num_processes, num_modules, violations, processes_json, modules_json, timestamp)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		serverAddr, playerIP, playerName, clientID,
-		numProcesses, numModules, violations, rawData, time.Now())
+		numProcesses, numModules, violations, processesJSON, modulesJSON, time.Now())
 	if err != nil {
 		return 0, fmt.Errorf("insert process snapshot: %w", err)
 	}
 	return result.LastInsertId()
+}
+
+// GetProcessSnapshotByID retrieves a single process snapshot by ID
+func (db *DB) GetProcessSnapshotByID(id int64) (*ProcessSnapshotRecord, error) {
+	record := &ProcessSnapshotRecord{}
+	var ts string
+	var violations, processesJSON, modulesJSON sql.NullString
+	var clientID sql.NullInt64
+	err := db.conn.QueryRow(`
+		SELECT id, server_addr, player_ip, player_name, client_id,
+			num_processes, num_modules, violations, processes_json, modules_json, timestamp
+		FROM process_snapshots WHERE id = ?`, id).Scan(
+		&record.ID, &record.ServerAddr, &record.PlayerIP, &record.PlayerName,
+		&clientID, &record.NumProcesses, &record.NumModules,
+		&violations, &processesJSON, &modulesJSON, &ts)
+	if err != nil {
+		return nil, fmt.Errorf("get process snapshot: %w", err)
+	}
+	if clientID.Valid {
+		record.ClientID = int(clientID.Int64)
+	}
+	if violations.Valid {
+		record.Violations = violations.String
+	}
+	if processesJSON.Valid {
+		record.ProcessesJSON = processesJSON.String
+	}
+	if modulesJSON.Valid {
+		record.ModulesJSON = modulesJSON.String
+	}
+	record.Timestamp = parseTimestamp(ts)
+	return record, nil
 }
 
 // GetProcessSnapshots retrieves process snapshots with optional filters
@@ -552,7 +629,7 @@ func (db *DB) GetProcessSnapshots(playerIP, dateFrom, dateTo string, page, perPa
 	offset := (page - 1) * perPage
 	query := fmt.Sprintf(`
 		SELECT id, server_addr, player_ip, player_name, client_id,
-			num_processes, num_modules, violations, raw_data, timestamp
+			num_processes, num_modules, violations, processes_json, modules_json, timestamp
 		FROM process_snapshots WHERE %s
 		ORDER BY timestamp DESC LIMIT ? OFFSET ?`, where)
 	args = append(args, perPage, offset)
@@ -572,12 +649,12 @@ func scanProcessSnapshots(rows *sql.Rows) ([]*ProcessSnapshotRecord, error) {
 	for rows.Next() {
 		record := &ProcessSnapshotRecord{}
 		var ts string
-		var violations sql.NullString
+		var violations, processesJSON, modulesJSON sql.NullString
 		var clientID sql.NullInt64
 		err := rows.Scan(
 			&record.ID, &record.ServerAddr, &record.PlayerIP, &record.PlayerName,
 			&clientID, &record.NumProcesses, &record.NumModules,
-			&violations, &record.RawData, &ts)
+			&violations, &processesJSON, &modulesJSON, &ts)
 		if err != nil {
 			return nil, err
 		}
@@ -587,10 +664,57 @@ func scanProcessSnapshots(rows *sql.Rows) ([]*ProcessSnapshotRecord, error) {
 		if violations.Valid {
 			record.Violations = violations.String
 		}
+		if processesJSON.Valid {
+			record.ProcessesJSON = processesJSON.String
+		}
+		if modulesJSON.Valid {
+			record.ModulesJSON = modulesJSON.String
+		}
 		record.Timestamp = parseTimestamp(ts)
 		records = append(records, record)
 	}
 	return records, rows.Err()
+}
+
+// GetBlacklist retrieves all blacklist entries
+func (db *DB) GetBlacklist() ([]BlacklistEntry, error) {
+	rows, err := db.conn.Query("SELECT id, type, pattern, added_by, created_at FROM blacklist ORDER BY type, pattern")
+	if err != nil {
+		return nil, fmt.Errorf("query blacklist: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []BlacklistEntry
+	for rows.Next() {
+		e := BlacklistEntry{}
+		var ts string
+		if err := rows.Scan(&e.ID, &e.Type, &e.Pattern, &e.AddedBy, &ts); err != nil {
+			return nil, err
+		}
+		e.CreatedAt = parseTimestamp(ts)
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}
+
+// AddBlacklistEntry adds a new blacklist entry
+func (db *DB) AddBlacklistEntry(entryType, pattern, addedBy string) error {
+	_, err := db.conn.Exec(
+		"INSERT OR IGNORE INTO blacklist (type, pattern, added_by) VALUES (?, ?, ?)",
+		entryType, pattern, addedBy)
+	if err != nil {
+		return fmt.Errorf("insert blacklist entry: %w", err)
+	}
+	return nil
+}
+
+// RemoveBlacklistEntry removes a blacklist entry by ID
+func (db *DB) RemoveBlacklistEntry(id int64) error {
+	_, err := db.conn.Exec("DELETE FROM blacklist WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("delete blacklist entry: %w", err)
+	}
+	return nil
 }
 
 // Close closes the database connection

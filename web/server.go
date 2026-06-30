@@ -53,6 +53,8 @@ func (ws *WebServer) routes() {
 	ws.mux.Handle("/screenshots/image/", ws.authMiddleware(http.HandlerFunc(ws.handleScreenshotImage)))
 	ws.mux.Handle("/violations", ws.authMiddleware(http.HandlerFunc(ws.handleViolations)))
 	ws.mux.Handle("/process-snapshots", ws.authMiddleware(http.HandlerFunc(ws.handleProcessSnapshots)))
+	ws.mux.Handle("/process-snapshots/", ws.authMiddleware(http.HandlerFunc(ws.handleProcessSnapshotDetail)))
+	ws.mux.Handle("/blacklist", ws.authMiddleware(http.HandlerFunc(ws.handleBlacklist)))
 	ws.mux.Handle("/servers", ws.authMiddleware(http.HandlerFunc(ws.handleServers)))
 	ws.mux.Handle("/api/stats", ws.authMiddleware(http.HandlerFunc(ws.handleAPIStats)))
 }
@@ -280,8 +282,123 @@ func (ws *WebServer) handleProcessSnapshots(w http.ResponseWriter, r *http.Reque
 		"PlayerIP":    playerIP,
 		"DateFrom":    dateFrom,
 		"DateTo":      dateTo,
+		"Page":        page,
 	}
 	ws.templates.Execute(w, "process-snapshots", data)
+}
+
+func (ws *WebServer) handleProcessSnapshotDetail(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	idStr := strings.TrimPrefix(r.URL.Path, "/process-snapshots/")
+	if idStr == "" || idStr == "process-snapshots" {
+		http.Redirect(w, r, "/process-snapshots", http.StatusFound)
+		return
+	}
+
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id == 0 {
+		http.NotFound(w, r)
+		return
+	}
+
+	snapshot, err := ws.db.GetProcessSnapshotByID(id)
+	if err != nil {
+		log.Printf("[WEB] Error getting process snapshot: %v", err)
+		http.NotFound(w, r)
+		return
+	}
+
+	type processView struct {
+		PID          uint32 `json:"pid"`
+		ParentPID    uint32 `json:"parent_pid"`
+		Name         string `json:"name"`
+		Suspicious   bool
+		MatchPattern string
+	}
+	type moduleView struct {
+		Name         string `json:"name"`
+		Path         string `json:"path"`
+		SHA1         string `json:"sha1"`
+		Suspicious   bool
+		MatchPattern string
+	}
+
+	var processes []processView
+	var modules []moduleView
+
+	if snapshot.ProcessesJSON != "" && snapshot.ProcessesJSON != "[]" {
+		json.Unmarshal([]byte(snapshot.ProcessesJSON), &processes)
+	}
+	if snapshot.ModulesJSON != "" && snapshot.ModulesJSON != "[]" {
+		json.Unmarshal([]byte(snapshot.ModulesJSON), &modules)
+	}
+
+	bl := ws.handler.Blacklist()
+	for i := range processes {
+		if matched, pattern := bl.CheckProcess(processes[i].Name); matched {
+			processes[i].Suspicious = true
+			processes[i].MatchPattern = pattern
+		}
+	}
+	for i := range modules {
+		if matched, pattern, _ := bl.CheckModuleWithPath(modules[i].Name, modules[i].Path); matched {
+			modules[i].Suspicious = true
+			modules[i].MatchPattern = pattern
+		}
+	}
+
+	data := map[string]interface{}{
+		"Snapshot":    snapshot,
+		"Processes":   processes,
+		"Modules":     modules,
+		"CurrentPage": "process-snapshots",
+	}
+	ws.templates.Execute(w, "process-snapshot-detail", data)
+}
+
+func (ws *WebServer) handleBlacklist(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	if r.Method == "POST" {
+		action := r.FormValue("action")
+		switch action {
+		case "add":
+			entryType := r.FormValue("type")
+			pattern := r.FormValue("pattern")
+			addedBy := r.FormValue("added_by")
+			if addedBy == "" {
+				addedBy = "admin"
+			}
+			if entryType != "" && pattern != "" {
+				if err := ws.handler.Blacklist().AddEntry(entryType, pattern, addedBy); err != nil {
+					log.Printf("[WEB] Error adding blacklist entry: %v", err)
+				}
+			}
+		case "delete":
+			idStr := r.FormValue("id")
+			id, err := strconv.ParseInt(idStr, 10, 64)
+			if err == nil && id > 0 {
+				if err := ws.handler.Blacklist().RemoveEntry(id); err != nil {
+					log.Printf("[WEB] Error removing blacklist entry: %v", err)
+				}
+			}
+		}
+		http.Redirect(w, r, "/blacklist", http.StatusFound)
+		return
+	}
+
+	entries := ws.handler.Blacklist().GetDBEntries()
+	processCount, moduleCount, dbCount := ws.handler.Blacklist().Stats()
+
+	data := map[string]interface{}{
+		"Entries":      entries,
+		"ProcessCount": processCount,
+		"ModuleCount":  moduleCount,
+		"DBCount":      dbCount,
+		"CurrentPage":  "blacklist",
+	}
+	ws.templates.Execute(w, "blacklist", data)
 }
 
 func (ws *WebServer) handleServers(w http.ResponseWriter, r *http.Request) {

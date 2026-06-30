@@ -122,6 +122,9 @@ func main() {
 
 	tcpServer := server.New(config.ListenAddr, storage)
 
+	// Initialize blacklist with database
+	tcpServer.GetHandler().Blacklist().SetDB(db)
+
 	// Wire up violation callback to log to database
 	tcpServer.GetHandler().OnViolation = func(serverAddr, playerIP, playerName string, clientID uint32, vType, reason string) {
 		db.InsertViolation(&database.ViolationRecord{

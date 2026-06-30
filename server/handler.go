@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strconv"
@@ -18,6 +19,7 @@ type Handler struct {
 	servers   map[string]*GameServer // keyed by remote address
 	serversMu sync.RWMutex
 	storage   *screenshots.Storage
+	blacklist *Blacklist
 	// Callback for violations
 	OnViolation func(serverAddr, playerIP, playerName string, clientID uint32, vType, reason string)
 }
@@ -25,9 +27,15 @@ type Handler struct {
 // NewHandler creates a new message handler
 func NewHandler(storage *screenshots.Storage) *Handler {
 	return &Handler{
-		servers: make(map[string]*GameServer),
-		storage: storage,
+		servers:   make(map[string]*GameServer),
+		storage:   storage,
+		blacklist: NewBlacklist(),
 	}
+}
+
+// Blacklist returns the blacklist manager
+func (h *Handler) Blacklist() *Blacklist {
+	return h.blacklist
 }
 
 // HandleMessage processes a single message from a game server
@@ -377,58 +385,76 @@ func (h *Handler) handleProcessData(gs *GameServer, pd *protocol.ProcessDataMess
 		}
 	}
 
+	// Check processes and modules against blacklist
+	var violations []string
+	for _, proc := range pd.Processes {
+		if matched, pattern := h.blacklist.CheckProcess(proc.Name); matched {
+			violations = append(violations, fmt.Sprintf("proceso sospechoso: %s (pid=%d, patron: %s)", proc.Name, proc.PID, pattern))
+		}
+	}
+	for _, mod := range pd.Modules {
+		if matched, pattern, matchIn := h.blacklist.CheckModuleWithPath(mod.Name, mod.Path); matched {
+			violations = append(violations, fmt.Sprintf("modulo sospechoso: %s (%s: %s)", mod.Name, matchIn, pattern))
+		}
+	}
+
+	violationStr := strings.Join(violations, "; ")
+
+	// Serialize processes and modules to JSON
+	processesJSON := "[]"
+	modulesJSON := "[]"
+
+	if len(pd.Processes) > 0 {
+		type jsonProcess struct {
+			PID      uint32 `json:"pid"`
+			ParentPID uint32 `json:"parent_pid"`
+			Name     string `json:"name"`
+		}
+		procs := make([]jsonProcess, len(pd.Processes))
+		for i, p := range pd.Processes {
+			procs[i] = jsonProcess{PID: p.PID, ParentPID: p.ParentPID, Name: p.Name}
+		}
+		if data, err := json.Marshal(procs); err == nil {
+			processesJSON = string(data)
+		}
+	}
+
+	if len(pd.Modules) > 0 {
+		type jsonModule struct {
+			Name string `json:"name"`
+			Path string `json:"path"`
+			SHA1 string `json:"sha1"`
+		}
+		mods := make([]jsonModule, len(pd.Modules))
+		for i, m := range pd.Modules {
+			mods[i] = jsonModule{Name: m.Name, Path: m.Path, SHA1: fmt.Sprintf("%x", m.SHA1)}
+		}
+		if data, err := json.Marshal(mods); err == nil {
+			modulesJSON = string(data)
+		}
+	}
+
 	// Store process snapshot in database
 	if h.storage != nil && h.storage.DB() != nil {
 		_, err := h.storage.DB().InsertProcessSnapshot(
 			gs.Hostname, playerIP, playerName,
 			int(pd.ClientID), len(pd.Processes), len(pd.Modules),
-			formatProcessViolations(pd), nil)
+			violationStr, processesJSON, modulesJSON)
 		if err != nil {
 			log.Printf("[HANDLER] Error storing process snapshot: %v", err)
 		}
 	}
-}
 
-// formatProcessViolations creates a summary string of any suspicious processes/modules
-func formatProcessViolations(pd *protocol.ProcessDataMessage) string {
-	var violations []string
-
-	// Check for known cheat process names
-	suspiciousProcs := []string{
-		"aimbot", "wallhack", "cheat", "inject", "hook",
-		"trainer", "hack", "speedhack", "noclip",
-	}
-
-	for _, proc := range pd.Processes {
-		name := strings.ToLower(proc.Name)
-		for _, suspicious := range suspiciousProcs {
-			if strings.Contains(name, suspicious) {
-				violations = append(violations, fmt.Sprintf("suspicious process: %s (pid=%d)", proc.Name, proc.PID))
-				break
+	// Log violations
+	if len(violations) > 0 {
+		log.Printf("[HANDLER] Process violations from %s (client %d): %s",
+			gs.RemoteAddr, pd.ClientID, violationStr)
+		if h.OnViolation != nil {
+			for _, v := range violations {
+				h.OnViolation(gs.RemoteAddr.String(), playerIP, playerName, pd.ClientID, "process", v)
 			}
 		}
 	}
-
-	// Check for known cheat module names
-	suspiciousMods := []string{
-		"cheat", "hack", "inject", "hook", "overlay",
-		"trainer", "speedhack", "aimbot", "wallhack",
-	}
-
-	for _, mod := range pd.Modules {
-		name := strings.ToLower(mod.Name)
-		for _, suspicious := range suspiciousMods {
-			if strings.Contains(name, suspicious) {
-				violations = append(violations, fmt.Sprintf("suspicious module: %s", mod.Name))
-				break
-			}
-		}
-	}
-
-	if len(violations) == 0 {
-		return ""
-	}
-	return strings.Join(violations, "; ")
 }
 
 // compareCvar checks a client's cvar value against expected check rules.
