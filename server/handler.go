@@ -79,6 +79,12 @@ func (h *Handler) HandleMessage(gs *GameServer, buf []byte) {
 	case protocol.ACC_PROCESSDATA:
 		h.handleProcessData(gs, msg.ProcessData)
 
+	case protocol.ACC_NAMEUPDATE:
+		h.handleNameUpdate(gs, msg.NameUpdate)
+
+	case protocol.ACC_HOSTNAMEUPDATE:
+		h.handleHostnameUpdate(gs, msg.HostnameUpdate)
+
 	default:
 		log.Printf("[HANDLER] Unknown message type %d from %s", msg.Type, gs.RemoteAddr)
 	}
@@ -455,6 +461,38 @@ func (h *Handler) handleProcessData(gs *GameServer, pd *protocol.ProcessDataMess
 			}
 		}
 	}
+}
+
+func (h *Handler) handleNameUpdate(gs *GameServer, nu *protocol.NameUpdateMessage) {
+	if nu == nil {
+		return
+	}
+
+	client := gs.GetClient(nu.ClientID)
+	if client == nil {
+		log.Printf("[HANDLER] Name update for unknown client %d from %s", nu.ClientID, gs.RemoteAddr)
+		return
+	}
+
+	oldName := client.Name
+	client.Name = nu.NewName
+
+	log.Printf("[HANDLER] Client %d name updated: %s -> %s (from %s)",
+		nu.ClientID, oldName, nu.NewName, gs.RemoteAddr)
+}
+
+func (h *Handler) handleHostnameUpdate(gs *GameServer, hu *protocol.HostnameUpdateMessage) {
+	if hu == nil {
+		return
+	}
+
+	gs.mu.Lock()
+	oldHostname := gs.Hostname
+	gs.Hostname = hu.Hostname
+	gs.mu.Unlock()
+
+	log.Printf("[HANDLER] Hostname updated: %s -> %s (from %s)",
+		oldHostname, hu.Hostname, gs.RemoteAddr)
 }
 
 // compareCvar checks a client's cvar value against expected check rules.

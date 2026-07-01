@@ -18,6 +18,8 @@ type Message struct {
 	Screenshot *ScreenshotData
 	ClientData *ClientDataMessage
 	ProcessData *ProcessDataMessage
+	NameUpdate *NameUpdateMessage
+	HostnameUpdate *HostnameUpdateMessage
 }
 
 // ClientFileData represents a single file hash reported by the client
@@ -62,6 +64,19 @@ type ProcessDataMessage struct {
 	PlayerName  string
 	Processes   []ProcessEntry
 	Modules     []ModuleEntry
+}
+
+// NameUpdateMessage contains a player name change (ACC_NAMEUPDATE)
+type NameUpdateMessage struct {
+	ClientID  uint32
+	Challenge uint32
+	OldName   string
+	NewName   string
+}
+
+// HostnameUpdateMessage contains a server hostname change (ACC_HOSTNAMEUPDATE)
+type HostnameUpdateMessage struct {
+	Hostname string
 }
 
 // VersionMessage is sent by q2pro server during handshake (ACC_VERSION)
@@ -199,6 +214,18 @@ func ParseMessage(buf []byte) (*Message, error) {
 		err := parseProcessDataMessage(r, msg)
 		if err != nil {
 			return nil, fmt.Errorf("parse process data: %w", err)
+		}
+
+	case ACC_NAMEUPDATE:
+		err := parseNameUpdateMessage(r, msg)
+		if err != nil {
+			return nil, fmt.Errorf("parse name update: %w", err)
+		}
+
+	case ACC_HOSTNAMEUPDATE:
+		err := parseHostnameUpdateMessage(r, msg)
+		if err != nil {
+			return nil, fmt.Errorf("parse hostname update: %w", err)
 		}
 
 	default:
@@ -605,6 +632,53 @@ func parseProcessDataMessage(r *Reader, msg *Message) error {
 		PlayerName: playerName,
 		Processes:  processes,
 		Modules:    modules,
+	}
+	return nil
+}
+
+func parseNameUpdateMessage(r *Reader, msg *Message) error {
+	clientID, err := r.ReadUint32()
+	if err != nil {
+		return err
+	}
+
+	challenge, err := r.ReadUint32()
+	if err != nil {
+		return err
+	}
+
+	oldName, err := r.ReadString()
+	if err != nil {
+		return err
+	}
+
+	newName, err := r.ReadString()
+	if err != nil {
+		return err
+	}
+
+	msg.NameUpdate = &NameUpdateMessage{
+		ClientID:  clientID,
+		Challenge: challenge,
+		OldName:   oldName,
+		NewName:   newName,
+	}
+	return nil
+}
+
+func parseHostnameUpdateMessage(r *Reader, msg *Message) error {
+	hostlen, err := r.ReadUint16()
+	if err != nil {
+		return err
+	}
+
+	hostnameBytes, err := r.ReadBytes(int(hostlen))
+	if err != nil {
+		return err
+	}
+
+	msg.HostnameUpdate = &HostnameUpdateMessage{
+		Hostname: string(hostnameBytes),
 	}
 	return nil
 }

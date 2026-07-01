@@ -44,6 +44,10 @@ const (
 	ACC_CLIENTDATA        ClientByte = 10
 	// Client-reported process snapshot (running processes + loaded modules)
 	ACC_PROCESSDATA       ClientByte = 11
+	// Player name change notification
+	ACC_NAMEUPDATE        ClientByte = 12
+	// Server hostname change notification
+	ACC_HOSTNAMEUPDATE    ClientByte = 13
 )
 
 // Cvar comparison operators
