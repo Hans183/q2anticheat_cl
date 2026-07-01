@@ -34,9 +34,10 @@ func (s *Storage) DB() *database.DB {
 	return s.db
 }
 
-// SaveScreenshot saves a JPEG screenshot to disk and stores metadata in DB
+// SaveScreenshot saves a screenshot to disk and stores metadata in DB
+// format: 0=jpeg, 1=webp
 func (s *Storage) SaveScreenshot(serverAddr, playerIP, playerName string,
-	clientID uint32, width, height int, jpegData []byte) (string, error) {
+	clientID uint32, width, height int, format byte, data []byte) (string, error) {
 
 	// Generate filename based on date and player
 	now := time.Now()
@@ -49,18 +50,29 @@ func (s *Storage) SaveScreenshot(serverAddr, playerIP, playerName string,
 		return "", fmt.Errorf("create date dir: %w", err)
 	}
 
+	// Select extension based on format
+	ext := ".webp"
+	if format == 0 {
+		ext = ".jpg"
+	}
+
 	// Generate filename
-	filename := fmt.Sprintf("%s_%s.jpg", playerIP, timeStr)
+	filename := fmt.Sprintf("%s_%s%s", playerIP, timeStr, ext)
 	filePath := filepath.Join(dirPath, filename)
 
-	// Write JPEG data
-	if err := os.WriteFile(filePath, jpegData, 0644); err != nil {
+	// Write image data
+	if err := os.WriteFile(filePath, data, 0644); err != nil {
 		return "", fmt.Errorf("write file: %w", err)
 	}
 
-	log.Printf("[SCREENSHOT] Saved: %s (%dx%d, %d bytes)", filePath, width, height, len(jpegData))
+	log.Printf("[SCREENSHOT] Saved: %s (%dx%d, format=%d, %d bytes)", filePath, width, height, format, len(data))
 
 	// Store metadata in database
+	formatStr := "webp"
+	if format == 0 {
+		formatStr = "jpeg"
+	}
+
 	record := &database.ScreenshotRecord{
 		ServerAddr: serverAddr,
 		PlayerIP:   playerIP,
@@ -68,8 +80,9 @@ func (s *Storage) SaveScreenshot(serverAddr, playerIP, playerName string,
 		ClientID:   int(clientID),
 		Width:      width,
 		Height:     height,
+		Format:     formatStr,
 		FilePath:   filePath,
-		FileSize:   int64(len(jpegData)),
+		FileSize:   int64(len(data)),
 		Timestamp:  now,
 	}
 

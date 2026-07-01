@@ -142,8 +142,9 @@ type ScreenshotData struct {
 	Challenge uint32
 	Width     uint16
 	Height    uint16
-	JPEGSize  uint32
-	JPEGData  []byte
+	Format    byte   // 0=jpeg, 1=webp
+	DataSize  uint32
+	Data      []byte
 }
 
 // ParseMessage parses a raw message buffer into a Message struct
@@ -460,12 +461,17 @@ func parseScreenshotData(r *Reader, msg *Message) error {
 		return err
 	}
 
-	jpegSize, err := r.ReadUint32()
+	format, err := r.ReadByte()
 	if err != nil {
 		return err
 	}
 
-	jpegData, err := r.ReadBytes(int(jpegSize))
+	dataSize, err := r.ReadUint32()
+	if err != nil {
+		return err
+	}
+
+	data, err := r.ReadBytes(int(dataSize))
 	if err != nil {
 		return err
 	}
@@ -475,8 +481,9 @@ func parseScreenshotData(r *Reader, msg *Message) error {
 		Challenge: challenge,
 		Width:     width,
 		Height:    height,
-		JPEGSize:  jpegSize,
-		JPEGData:  jpegData,
+		Format:    format,
+		DataSize:  dataSize,
+		Data:      data,
 	}
 	return nil
 }

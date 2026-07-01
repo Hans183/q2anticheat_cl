@@ -25,6 +25,7 @@ type ScreenshotRecord struct {
 	ClientID   int
 	Width      int
 	Height     int
+	Format     string
 	FilePath   string
 	FileSize   int64
 	Timestamp  time.Time
@@ -135,6 +136,7 @@ func (db *DB) migrate() error {
 		client_id   INTEGER,
 		width       INTEGER NOT NULL,
 		height      INTEGER NOT NULL,
+		format      TEXT DEFAULT 'webp',
 		file_path   TEXT NOT NULL,
 		file_size   INTEGER NOT NULL,
 		timestamp   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -247,6 +249,13 @@ func (db *DB) migrateColumns() {
 		db.conn.Exec("ALTER TABLE blacklist ADD COLUMN enabled BOOLEAN NOT NULL DEFAULT 1")
 		log.Printf("[DB] Migrated: added enabled column to blacklist")
 	}
+
+	// Add format to screenshots if missing
+	db.conn.QueryRow("SELECT COUNT(*) FROM pragma_table_info('screenshots') WHERE name='format'").Scan(&hasColumn)
+	if !hasColumn {
+		db.conn.Exec("ALTER TABLE screenshots ADD COLUMN format TEXT DEFAULT 'webp'")
+		log.Printf("[DB] Migrated: added format column to screenshots")
+	}
 }
 
 // EnsureDefaultAdmin creates the default admin user if none exists
@@ -345,10 +354,10 @@ func (db *DB) CleanupSessions() {
 func (db *DB) InsertScreenshot(record *ScreenshotRecord) (int64, error) {
 	result, err := db.conn.Exec(`
 		INSERT INTO screenshots (server_addr, player_ip, player_name, client_id,
-			width, height, file_path, file_size, timestamp)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			width, height, format, file_path, file_size, timestamp)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		record.ServerAddr, record.PlayerIP, record.PlayerName, record.ClientID,
-		record.Width, record.Height, record.FilePath, record.FileSize, record.Timestamp)
+		record.Width, record.Height, record.Format, record.FilePath, record.FileSize, record.Timestamp)
 	if err != nil {
 		return 0, fmt.Errorf("insert screenshot: %w", err)
 	}
@@ -367,18 +376,22 @@ func (db *DB) GetScreenshot(id int64) (*ScreenshotRecord, error) {
 	var ts string
 	var notes sql.NullString
 	var clientID sql.NullInt64
+	var format sql.NullString
 	err := db.conn.QueryRow(`
 		SELECT id, server_addr, player_ip, player_name, client_id,
-			width, height, file_path, file_size, timestamp, reviewed, notes
+			width, height, format, file_path, file_size, timestamp, reviewed, notes
 		FROM screenshots WHERE id = ?`, id).Scan(
 		&record.ID, &record.ServerAddr, &record.PlayerIP, &record.PlayerName,
-		&clientID, &record.Width, &record.Height, &record.FilePath,
+		&clientID, &record.Width, &record.Height, &format, &record.FilePath,
 		&record.FileSize, &ts, &record.Reviewed, &notes)
 	if err != nil {
 		return nil, fmt.Errorf("get screenshot: %w", err)
 	}
 	if clientID.Valid {
 		record.ClientID = int(clientID.Int64)
+	}
+	if format.Valid {
+		record.Format = format.String
 	}
 	if notes.Valid {
 		record.Notes = notes.String
@@ -418,7 +431,7 @@ func (db *DB) GetScreenshots(playerIP, dateFrom, dateTo string, unreviewedOnly b
 	offset := (page - 1) * perPage
 	query := fmt.Sprintf(`
 		SELECT id, server_addr, player_ip, player_name, client_id,
-			width, height, file_path, file_size, timestamp, reviewed, notes
+			width, height, format, file_path, file_size, timestamp, reviewed, notes
 		FROM screenshots WHERE %s
 		ORDER BY timestamp DESC LIMIT ? OFFSET ?`, where)
 	args = append(args, perPage, offset)
@@ -437,7 +450,7 @@ func (db *DB) GetScreenshots(playerIP, dateFrom, dateTo string, unreviewedOnly b
 func (db *DB) GetUnreviewedScreenshots(limit int) ([]*ScreenshotRecord, error) {
 	rows, err := db.conn.Query(`
 		SELECT id, server_addr, player_ip, player_name, client_id,
-			width, height, file_path, file_size, timestamp, reviewed, notes
+			width, height, format, file_path, file_size, timestamp, reviewed, notes
 		FROM screenshots WHERE reviewed = 0
 		ORDER BY timestamp DESC LIMIT ?`, limit)
 	if err != nil {
@@ -769,15 +782,19 @@ func scanScreenshots(rows *sql.Rows) ([]*ScreenshotRecord, error) {
 		var ts string
 		var notes sql.NullString
 		var clientID sql.NullInt64
+		var format sql.NullString
 		err := rows.Scan(
 			&record.ID, &record.ServerAddr, &record.PlayerIP, &record.PlayerName,
-			&clientID, &record.Width, &record.Height, &record.FilePath,
+			&clientID, &record.Width, &record.Height, &format, &record.FilePath,
 			&record.FileSize, &ts, &record.Reviewed, &notes)
 		if err != nil {
 			return nil, err
 		}
 		if clientID.Valid {
 			record.ClientID = int(clientID.Int64)
+		}
+		if format.Valid {
+			record.Format = format.String
 		}
 		if notes.Valid {
 			record.Notes = notes.String

@@ -209,8 +209,8 @@ func (h *Handler) handleScreenshot(gs *GameServer, ss *protocol.ScreenshotData) 
 		return
 	}
 
-	log.Printf("[HANDLER] Screenshot received from %s: client=%d, %dx%d, %d bytes",
-		gs.RemoteAddr, ss.ClientID, ss.Width, ss.Height, len(ss.JPEGData))
+	log.Printf("[HANDLER] Screenshot received from %s: client=%d, %dx%d, format=%d, %d bytes",
+		gs.RemoteAddr, ss.ClientID, ss.Width, ss.Height, ss.Format, len(ss.Data))
 
 	// Look up client info for IP address
 	client := gs.GetClient(ss.ClientID)
@@ -227,7 +227,7 @@ func (h *Handler) handleScreenshot(gs *GameServer, ss *protocol.ScreenshotData) 
 	if h.storage != nil {
 		filePath, err := h.storage.SaveScreenshot(
 			gs.Hostname, playerIP, playerName,
-			ss.ClientID, int(ss.Width), int(ss.Height), ss.JPEGData)
+			ss.ClientID, int(ss.Width), int(ss.Height), ss.Format, ss.Data)
 		if err != nil {
 			log.Printf("[HANDLER] Error saving screenshot: %v", err)
 		} else {
