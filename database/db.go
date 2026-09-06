@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -730,6 +731,17 @@ func (db *DB) GetBlacklist() ([]BlacklistEntry, error) {
 
 // AddBlacklistEntry adds a new blacklist entry
 func (db *DB) AddBlacklistEntry(entryType, pattern, addedBy string) error {
+	entryType = strings.ToLower(strings.TrimSpace(entryType))
+	pattern = strings.ToLower(strings.TrimSpace(pattern))
+	if pattern == "" {
+		return fmt.Errorf("blacklist pattern cannot be empty")
+	}
+	if entryType != "process" && entryType != "module" {
+		return fmt.Errorf("invalid blacklist entry type: %s", entryType)
+	}
+	if addedBy == "" {
+		addedBy = "admin"
+	}
 	_, err := db.conn.Exec(
 		"INSERT OR IGNORE INTO blacklist (type, pattern, source, added_by) VALUES (?, ?, 'user', ?)",
 		entryType, pattern, addedBy)
@@ -739,9 +751,9 @@ func (db *DB) AddBlacklistEntry(entryType, pattern, addedBy string) error {
 	return nil
 }
 
-// RemoveBlacklistEntry removes a blacklist entry by ID (only user entries)
+// RemoveBlacklistEntry removes a blacklist entry by ID
 func (db *DB) RemoveBlacklistEntry(id int64) error {
-	_, err := db.conn.Exec("DELETE FROM blacklist WHERE id = ? AND source = 'user'", id)
+	_, err := db.conn.Exec("DELETE FROM blacklist WHERE id = ?", id)
 	if err != nil {
 		return fmt.Errorf("delete blacklist entry: %w", err)
 	}
@@ -757,8 +769,17 @@ func (db *DB) ToggleBlacklistEntry(id int64) error {
 	return nil
 }
 
-// EnsureHardcodedEntries inserts hardcoded patterns if they don't exist
+// EnsureHardcodedEntries inserts hardcoded patterns if the table is empty (initial seed)
 func (db *DB) EnsureHardcodedEntries(entries []BlacklistEntry) error {
+	var count int
+	err := db.conn.QueryRow("SELECT COUNT(*) FROM blacklist").Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check blacklist count: %w", err)
+	}
+	if count > 0 {
+		return nil
+	}
+
 	for _, e := range entries {
 		_, err := db.conn.Exec(
 			"INSERT OR IGNORE INTO blacklist (type, pattern, source, enabled, added_by) VALUES (?, ?, 'hardcoded', ?, 'system')",

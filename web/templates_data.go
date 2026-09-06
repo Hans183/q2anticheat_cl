@@ -315,14 +315,23 @@ var templates = map[string]string{
 
   <div class="section-title">Procesos</div>
   {{if .Processes}}
-  <div class="table-responsive"><table class="process-table">
-    <thead><tr><th>PID</th><th>PID Padre</th><th>Nombre</th><th>Estado</th></tr></thead>
+  <div class="table-responsive"><table class="process-table data-table">
+    <thead><tr><th>PID</th><th>PID Padre</th><th>Nombre</th><th>Estado</th><th>Acción</th></tr></thead>
     <tbody>{{range .Processes}}
     <tr{{if .Suspicious}} class="row-suspicious"{{end}}>
       <td>{{.PID}}</td>
       <td>{{.ParentPID}}</td>
       <td>{{.Name}}{{if .Suspicious}} <span class="badge-suspicious">{{.MatchPattern}}</span>{{end}}</td>
-      <td>{{if .Suspicious}}<span style="color:#ef4444">SOSPECHOSO</span>{{else}}<span style="color:#22c55e">LIMPIO</span>{{end}}</td>
+      <td>{{if .Suspicious}}<span style="color:#ef4444;font-weight:600">SOSPECHOSO</span>{{else}}<span style="color:#22c55e;font-weight:600">LIMPIO</span>{{end}}</td>
+      <td>
+        <form method="POST" action="/blacklist" style="display:inline" onsubmit="return confirm('¿Agregar \'{{.Name}}\' a la Blacklist de procesos?')">
+          <input type="hidden" name="action" value="add">
+          <input type="hidden" name="type" value="process">
+          <input type="hidden" name="pattern" value="{{.Name}}">
+          <input type="hidden" name="added_by" value="snapshot_inspect">
+          <button type="submit" class="btn btn-sm btn-outline-danger" title="Agregar proceso a la blacklist">&#128683; Blacklist</button>
+        </form>
+      </td>
     </tr>
     {{end}}</tbody>
   </table></div>
@@ -330,14 +339,23 @@ var templates = map[string]string{
 
   <div class="section-title">Modulos</div>
   {{if .Modules}}
-  <div class="table-responsive"><table class="module-table">
-    <thead><tr><th>Nombre</th><th>Ruta</th><th>SHA1</th><th>Estado</th></tr></thead>
+  <div class="table-responsive"><table class="module-table data-table">
+    <thead><tr><th>Nombre</th><th>Ruta</th><th>SHA1</th><th>Estado</th><th>Acción</th></tr></thead>
     <tbody>{{range .Modules}}
     <tr{{if .Suspicious}} class="row-suspicious"{{end}}>
       <td>{{.Name}}{{if .Suspicious}} <span class="badge-suspicious">{{.MatchPattern}}</span>{{end}}</td>
       <td style="font-size:11px;color:#8b95a5">{{.Path}}</td>
       <td style="font-family:monospace;font-size:11px">{{.SHA1}}</td>
-      <td>{{if .Suspicious}}<span style="color:#ef4444">SOSPECHOSO</span>{{else}}<span style="color:#22c55e">LIMPIO</span>{{end}}</td>
+      <td>{{if .Suspicious}}<span style="color:#ef4444;font-weight:600">SOSPECHOSO</span>{{else}}<span style="color:#22c55e;font-weight:600">LIMPIO</span>{{end}}</td>
+      <td>
+        <form method="POST" action="/blacklist" style="display:inline" onsubmit="return confirm('¿Agregar \'{{.Name}}\' a la Blacklist de módulos?')">
+          <input type="hidden" name="action" value="add">
+          <input type="hidden" name="type" value="module">
+          <input type="hidden" name="pattern" value="{{.Name}}">
+          <input type="hidden" name="added_by" value="snapshot_inspect">
+          <button type="submit" class="btn btn-sm btn-outline-danger" title="Agregar módulo a la blacklist">&#128683; Blacklist</button>
+        </form>
+      </td>
     </tr>
     {{end}}</tbody>
   </table></div>
@@ -352,74 +370,161 @@ var templates = map[string]string{
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Q2PRO Anticheat - Blacklist</title>
 <link rel="stylesheet" href="/static/style.css">
-<style>
-.toggle-btn { border: none; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 500; }
-.toggle-active { background: #22c55e; color: white; }
-.toggle-inactive { background: #6b7280; color: white; }
-.badge-hardcoded { background: #3b82f6; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
-.badge-user { background: #8b5cf6; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
-.row-disabled { opacity: 0.5; }
-</style>
 </head><body>
 {{template "sidebar" .}}
 <div class="main-content">
-<div class="topbar"><h2>Blacklist</h2></div>
+<div class="topbar"><h2>Blacklist de Procesos y Módulos</h2></div>
 <div class="content">
+
+{{if eq .Msg "added"}}
+<div class="alert alert-success"><span>&#10004;</span> Patrón agregado exitosamente a la blacklist.</div>
+{{else if eq .Msg "deleted"}}
+<div class="alert alert-success"><span>&#10004;</span> Patrón eliminado correctamente de la blacklist.</div>
+{{else if eq .Msg "toggled"}}
+<div class="alert alert-info"><span>&#9432;</span> Estado del patrón actualizado correctamente.</div>
+{{else if eq .Error "empty_pattern"}}
+<div class="alert alert-danger"><span>&#9888;</span> El patrón no puede estar vacío.</div>
+{{else if eq .Error "add_failed"}}
+<div class="alert alert-danger"><span>&#9888;</span> Error al agregar el patrón. Verifique si ya existe en la lista.</div>
+{{else if eq .Error "delete_failed"}}
+<div class="alert alert-danger"><span>&#9888;</span> Error al eliminar el patrón de la base de datos.</div>
+{{else if eq .Error "toggle_failed"}}
+<div class="alert alert-danger"><span>&#9888;</span> Error al cambiar el estado del patrón.</div>
+{{end}}
+
 <div class="stats-grid">
   <div class="stat-card"><div class="stat-icon red">&#9888;</div><div class="stat-info"><div class="stat-value">{{.ProcessCount}}</div><div class="stat-label">Patrones Activos (Procesos)</div></div></div>
-  <div class="stat-card"><div class="stat-icon orange">&#128737;</div><div class="stat-info"><div class="stat-value">{{.ModuleCount}}</div><div class="stat-label">Patrones Activos (Modulos)</div></div></div>
-  <div class="stat-card"><div class="stat-icon blue">&#128196;</div><div class="stat-info"><div class="stat-value">{{.TotalEntries}}</div><div class="stat-label">Total Patrones</div></div></div>
+  <div class="stat-card"><div class="stat-icon orange">&#128737;</div><div class="stat-info"><div class="stat-value">{{.ModuleCount}}</div><div class="stat-label">Patrones Activos (Módulos)</div></div></div>
+  <div class="stat-card"><div class="stat-icon blue">&#128196;</div><div class="stat-info"><div class="stat-value">{{.TotalEntries}}</div><div class="stat-label">Total Patrones Registrados</div></div></div>
 </div>
-<div class="card"><div class="card-header"><h3>Agregar Patron Personalizado</h3></div><div class="card-body">
-  <form method="POST" action="/blacklist" class="filter-form"><div class="form-row">
-    <div class="form-group"><label>Tipo</label>
-      <select name="type" required><option value="process">Proceso</option><option value="module">Modulo</option></select>
+
+<div class="card"><div class="card-header"><h3>Agregar Patrón a la Blacklist</h3></div><div class="card-body">
+  <form method="POST" action="/blacklist" class="filter-form">
+    <input type="hidden" name="action" value="add">
+    <div class="form-row">
+      <div class="form-group" style="max-width: 180px;"><label>Tipo de Elemento</label>
+        <select name="type" required>
+          <option value="process">Proceso (.exe)</option>
+          <option value="module">Módulo (.dll)</option>
+        </select>
+      </div>
+      <div class="form-group" style="flex: 2;"><label>Patrón a Bloquear (coincidencia de texto)</label>
+        <input type="text" name="pattern" required placeholder="ej: cheatengine, aimware, xenos.dll, speedhack">
+      </div>
+      <div class="form-group" style="max-width: 180px;"><label>Registrado por</label>
+        <input type="text" name="added_by" value="admin" placeholder="admin">
+      </div>
+      <div class="form-group" style="flex: 0;"><label>&nbsp;</label>
+        <button type="submit" class="btn btn-primary" style="white-space: nowrap;">&#43; Agregar Patrón</button>
+      </div>
     </div>
-    <div class="form-group"><label>Patron (substring)</label>
-      <input type="text" name="pattern" required placeholder="ej: cheatengine">
-    </div>
-    <div class="form-group"><label>Agregado por</label>
-      <input type="text" name="added_by" value="admin" placeholder="admin">
-    </div>
-    <div class="form-group"><label>&nbsp;</label><button type="submit" class="btn btn-primary">Agregar</button></div>
-  </div></form>
+  </form>
 </div></div>
-<div class="card"><div class="card-header"><h3>Todos los Patrones ({{.TotalEntries}})</h3></div><div class="card-body">
+
+<div class="card">
+  <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+    <h3>Patrones Configurados (<span id="visible-count">{{.TotalEntries}}</span> / {{.TotalEntries}})</h3>
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+      <div class="search-box">
+        <span class="search-icon">&#128269;</span>
+        <input type="text" id="bl-search" placeholder="Filtrar patrones..." onkeyup="filterBlacklistTable()">
+      </div>
+      <select id="bl-filter-type" onchange="filterBlacklistTable()" style="padding:7px 10px; background:var(--bg-primary); border:1px solid var(--border); border-radius:6px; color:var(--text-primary); font-size:13px;">
+        <option value="all">Todos los tipos</option>
+        <option value="process">Solo Procesos</option>
+        <option value="module">Solo Módulos</option>
+      </select>
+      <select id="bl-filter-status" onchange="filterBlacklistTable()" style="padding:7px 10px; background:var(--bg-primary); border:1px solid var(--border); border-radius:6px; color:var(--text-primary); font-size:13px;">
+        <option value="all">Todos los estados</option>
+        <option value="active">Solo Activos</option>
+        <option value="inactive">Solo Inactivos</option>
+      </select>
+    </div>
+  </div>
+  <div class="card-body">
 {{if .Entries}}
-<div class="table-responsive"><table class="data-table">
-  <thead><tr><th>ID</th><th>Tipo</th><th>Patron</th><th>Fuente</th><th>Estado</th><th>Agregado por</th><th>Acciones</th></tr></thead>
+<div class="table-responsive"><table class="data-table" id="blacklist-table">
+  <thead><tr>
+    <th style="width: 60px;">ID</th>
+    <th style="width: 110px;">Tipo</th>
+    <th>Patrón de Coincidencia</th>
+    <th style="width: 110px;">Origen</th>
+    <th style="width: 110px;">Estado</th>
+    <th style="width: 130px;">Agregado por</th>
+    <th style="width: 120px; text-align: right;">Acciones</th>
+  </tr></thead>
   <tbody>{{range .Entries}}
-  <tr{{if not .Enabled}} class="row-disabled"{{end}}>
+  <tr{{if not .Enabled}} class="row-disabled"{{end}} data-type="{{.Type}}" data-status="{{if .Enabled}}active{{else}}inactive{{end}}" data-pattern="{{.Pattern}}">
     <td>{{.ID}}</td>
-    <td><span class="badge {{if eq .Type "process"}}badge-danger{{else}}badge-warning{{end}}">{{.Type}}</span></td>
-    <td><code>{{.Pattern}}</code></td>
-    <td>{{if eq .Source "hardcoded"}}<span class="badge-hardcoded">hardcoded</span>{{else}}<span class="badge-user">user</span>{{end}}</td>
+    <td><span class="badge {{if eq .Type "process"}}badge-danger{{else}}badge-warning{{end}}">{{if eq .Type "process"}}Proceso{{else}}Módulo{{end}}</span></td>
+    <td><code style="font-weight:600; font-size:13px;">{{.Pattern}}</code></td>
+    <td>{{if eq .Source "hardcoded"}}<span class="badge-hardcoded">Sistema</span>{{else}}<span class="badge-user">Usuario</span>{{end}}</td>
     <td>
       <form method="POST" action="/blacklist" style="display:inline">
         <input type="hidden" name="action" value="toggle">
         <input type="hidden" name="id" value="{{.ID}}">
-        <button type="submit" class="toggle-btn {{if .Enabled}}toggle-active{{else}}toggle-inactive{{end}}">
+        <button type="submit" class="toggle-btn {{if .Enabled}}toggle-active{{else}}toggle-inactive{{end}}" title="Haga clic para activar o desactivar">
           {{if .Enabled}}Activo{{else}}Inactivo{{end}}
         </button>
       </form>
     </td>
-    <td>{{.AddedBy}}</td>
-    <td>
-      {{if eq .Source "user"}}
-      <form method="POST" action="/blacklist" style="display:inline" onsubmit="return confirm('Eliminar este patron?')">
+    <td><span style="color:var(--text-secondary);">{{.AddedBy}}</span></td>
+    <td style="text-align: right;">
+      <form method="POST" action="/blacklist" style="display:inline" onsubmit="return confirm('¿Está seguro de eliminar el patrón \'{{.Pattern}}\' de la blacklist?')">
         <input type="hidden" name="action" value="delete">
         <input type="hidden" name="id" value="{{.ID}}">
-        <button type="submit" class="btn btn-sm btn-danger">Eliminar</button>
+        <button type="submit" class="btn btn-sm btn-danger" title="Eliminar este patrón de la blacklist">
+          &#128465; Eliminar
+        </button>
       </form>
-      {{else}}<span style="color:#6b7280;font-size:12px">Sistema</span>{{end}}
     </td>
   </tr>
   {{end}}</tbody>
 </table></div>
+<div id="no-filter-results" style="display:none; padding:24px; text-align:center; color:var(--text-secondary);">
+  <p>No se encontraron patrones que coincidan con el filtro de búsqueda.</p>
+</div>
 {{else}}<div class="empty-state"><p>No hay patrones en la blacklist</p></div>{{end}}
 </div></div>
 </div></div>
 <script src="/static/app.js"></script>
+<script>
+function filterBlacklistTable() {
+  var searchInput = document.getElementById('bl-search').value.toLowerCase().trim();
+  var typeFilter = document.getElementById('bl-filter-type').value;
+  var statusFilter = document.getElementById('bl-filter-status').value;
+  var table = document.getElementById('blacklist-table');
+  if (!table) return;
+
+  var rows = table.querySelectorAll('tbody tr');
+  var visibleCount = 0;
+
+  rows.forEach(function(row) {
+    var type = row.getAttribute('data-type');
+    var status = row.getAttribute('data-status');
+    var pattern = (row.getAttribute('data-pattern') || '').toLowerCase();
+
+    var matchSearch = !searchInput || pattern.indexOf(searchInput) !== -1;
+    var matchType = typeFilter === 'all' || type === typeFilter;
+    var matchStatus = statusFilter === 'all' || status === statusFilter;
+
+    if (matchSearch && matchType && matchStatus) {
+      row.style.display = '';
+      visibleCount++;
+    } else {
+      row.style.display = 'none';
+    }
+  });
+
+  var countSpan = document.getElementById('visible-count');
+  if (countSpan) countSpan.textContent = visibleCount;
+
+  var noResults = document.getElementById('no-filter-results');
+  if (noResults) {
+    noResults.style.display = (visibleCount === 0 && rows.length > 0) ? 'block' : 'none';
+  }
+}
+</script>
 </body></html>`,
 
 "sidebar": `<button class="hamburger" onclick="toggleSidebar()">&#9776;</button>

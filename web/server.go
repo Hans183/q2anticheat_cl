@@ -362,37 +362,57 @@ func (ws *WebServer) handleBlacklist(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method == "POST" {
 		action := r.FormValue("action")
-		switch action {
-		case "add":
-			entryType := r.FormValue("type")
-			pattern := r.FormValue("pattern")
-			addedBy := r.FormValue("added_by")
+		redirectURL := "/blacklist"
+
+		if action == "add" || (action == "" && r.FormValue("pattern") != "") {
+			entryType := strings.TrimSpace(r.FormValue("type"))
+			pattern := strings.TrimSpace(r.FormValue("pattern"))
+			addedBy := strings.TrimSpace(r.FormValue("added_by"))
 			if addedBy == "" {
 				addedBy = "admin"
 			}
-			if entryType != "" && pattern != "" {
+			if entryType == "" {
+				entryType = "process"
+			}
+			if pattern != "" {
 				if err := ws.handler.Blacklist().AddEntry(entryType, pattern, addedBy); err != nil {
 					log.Printf("[WEB] Error adding blacklist entry: %v", err)
+					redirectURL = "/blacklist?error=add_failed"
+				} else {
+					redirectURL = "/blacklist?msg=added"
 				}
+			} else {
+				redirectURL = "/blacklist?error=empty_pattern"
 			}
-		case "delete":
+		} else if action == "delete" {
 			idStr := r.FormValue("id")
 			id, err := strconv.ParseInt(idStr, 10, 64)
 			if err == nil && id > 0 {
 				if err := ws.handler.Blacklist().RemoveEntry(id); err != nil {
 					log.Printf("[WEB] Error removing blacklist entry: %v", err)
+					redirectURL = "/blacklist?error=delete_failed"
+				} else {
+					redirectURL = "/blacklist?msg=deleted"
 				}
+			} else {
+				redirectURL = "/blacklist?error=invalid_id"
 			}
-		case "toggle":
+		} else if action == "toggle" {
 			idStr := r.FormValue("id")
 			id, err := strconv.ParseInt(idStr, 10, 64)
 			if err == nil && id > 0 {
 				if err := ws.handler.Blacklist().ToggleEntry(id); err != nil {
 					log.Printf("[WEB] Error toggling blacklist entry: %v", err)
+					redirectURL = "/blacklist?error=toggle_failed"
+				} else {
+					redirectURL = "/blacklist?msg=toggled"
 				}
+			} else {
+				redirectURL = "/blacklist?error=invalid_id"
 			}
 		}
-		http.Redirect(w, r, "/blacklist", http.StatusFound)
+
+		http.Redirect(w, r, redirectURL, http.StatusFound)
 		return
 	}
 
@@ -405,6 +425,8 @@ func (ws *WebServer) handleBlacklist(w http.ResponseWriter, r *http.Request) {
 		"ModuleCount":  moduleCount,
 		"TotalEntries": totalEntries,
 		"CurrentPage":  "blacklist",
+		"Msg":          r.URL.Query().Get("msg"),
+		"Error":        r.URL.Query().Get("error"),
 	}
 	ws.templates.Execute(w, "blacklist", data)
 }
