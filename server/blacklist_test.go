@@ -44,6 +44,17 @@ func TestServerBlacklistManager(t *testing.T) {
 		t.Fatalf("expected my_bot.exe to match custom pattern")
 	}
 
+	// Add custom SHA1 hash
+	testHash := "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+	if err := bl.AddEntry("sha1", testHash, "admin"); err != nil {
+		t.Fatalf("failed to add SHA1 hash entry: %v", err)
+	}
+
+	matchedHash, pat, _ := bl.CheckModuleFull("innocent_name.dll", "C:\\games\\innocent_name.dll", testHash)
+	if !matchedHash || pat != testHash {
+		t.Fatalf("expected innocent_name.dll to match due to SHA1 hash blacklist")
+	}
+
 	// Find the entry ID and remove it
 	entries := bl.GetAllEntries()
 	var botID int64

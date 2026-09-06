@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/user/anticheat_cl/database"
 	"github.com/user/anticheat_cl/screenshots"
@@ -147,43 +148,160 @@ func TestWebBlacklistActions(t *testing.T) {
 	}
 }
 
-func TestWebPlayerFiltering(t *testing.T) {
-	ws, _, _, cleanup := setupTestWeb(t)
+func TestWebPlayerFilteringAndProfiles(t *testing.T) {
+	ws, db, _, cleanup := setupTestWeb(t)
 	defer cleanup()
 
+	// Seed some data
+	ss := &database.ScreenshotRecord{
+		ServerAddr: "127.0.0.1:27910",
+		PlayerIP:   "10.0.0.1",
+		PlayerName: "GamerOne",
+		ClientID:   1,
+		Width:      640,
+		Height:     480,
+		Format:     "webp",
+		FilePath:   "/tmp/ss.webp",
+		FileSize:   2048,
+		Timestamp:  time.Now(),
+	}
+	db.InsertScreenshot(ss)
+
 	// 1. Screenshots filter
-	req := httptest.NewRequest("GET", "/screenshots?name=Sniper", nil)
+	req := httptest.NewRequest("GET", "/screenshots?name=Gamer", nil)
 	w := httptest.NewRecorder()
 	ws.handleScreenshots(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d", w.Code)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, "name=\"name\" value=\"Sniper\"") {
-		t.Fatalf("expected name input with 'Sniper' value in HTML")
+	if !strings.Contains(body, "name=\"name\" value=\"Gamer\"") {
+		t.Fatalf("expected name input with 'Gamer' value in HTML")
 	}
 
 	// 2. Violations filter
-	req = httptest.NewRequest("GET", "/violations?name=Killer", nil)
+	req = httptest.NewRequest("GET", "/violations?name=Gamer", nil)
 	w = httptest.NewRecorder()
 	ws.handleViolations(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d", w.Code)
 	}
 	body = w.Body.String()
-	if !strings.Contains(body, "name=\"name\" value=\"Killer\"") {
-		t.Fatalf("expected name input with 'Killer' value in HTML")
+	if !strings.Contains(body, "name=\"name\" value=\"Gamer\"") {
+		t.Fatalf("expected name input with 'Gamer' value in HTML")
 	}
 
 	// 3. Process Snapshots filter
-	req = httptest.NewRequest("GET", "/process-snapshots?name=ProGamer", nil)
+	req = httptest.NewRequest("GET", "/process-snapshots?name=Gamer", nil)
 	w = httptest.NewRecorder()
 	ws.handleProcessSnapshots(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d", w.Code)
 	}
 	body = w.Body.String()
-	if !strings.Contains(body, "name=\"name\" value=\"ProGamer\"") {
-		t.Fatalf("expected name input with 'ProGamer' value in HTML")
+	if !strings.Contains(body, "name=\"name\" value=\"Gamer\"") {
+		t.Fatalf("expected name input with 'Gamer' value in HTML")
+	}
+
+	// 4. Unified Player Profile endpoint
+	req = httptest.NewRequest("GET", "/player?q=GamerOne", nil)
+	w = httptest.NewRecorder()
+	ws.handlePlayerProfile(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for /player, got %d", w.Code)
+	}
+	body = w.Body.String()
+	if !strings.Contains(body, "GamerOne") {
+		t.Fatalf("expected GamerOne profile in body")
+	}
+
+	// 5. CSV Exports
+	req = httptest.NewRequest("GET", "/screenshots/export.csv?name=Gamer", nil)
+	w = httptest.NewRecorder()
+	ws.handleExportScreenshotsCSV(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for screenshots export, got %d", w.Code)
+	}
+	if !strings.Contains(w.Header().Get("Content-Type"), "text/csv") {
+		t.Fatalf("expected text/csv Content-Type")
+	}
+
+	req = httptest.NewRequest("GET", "/violations/export.csv", nil)
+	w = httptest.NewRecorder()
+	ws.handleExportViolationsCSV(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for violations export, got %d", w.Code)
+	}
+	if !strings.Contains(w.Header().Get("Content-Type"), "text/csv") {
+		t.Fatalf("expected text/csv Content-Type")
+	}
+}
+
+func TestWebBulkReview(t *testing.T) {
+	ws, db, _, cleanup := setupTestWeb(t)
+	defer cleanup()
+
+	ss1 := &database.ScreenshotRecord{
+		ServerAddr: "127.0.0.1:27910", PlayerIP: "1.1.1.1", PlayerName: "P1",
+		Width: 640, Height: 480, Format: "webp", FilePath: "/tmp/1.webp",
+		FileSize: 100, Timestamp: time.Now(),
+	}
+	ss2 := &database.ScreenshotRecord{
+		ServerAddr: "127.0.0.1:27910", PlayerIP: "1.1.1.2", PlayerName: "P2",
+		Width: 640, Height: 480, Format: "webp", FilePath: "/tmp/2.webp",
+		FileSize: 100, Timestamp: time.Now(),
+	}
+	id1, _ := db.InsertScreenshot(ss1)
+	id2, _ := db.InsertScreenshot(ss2)
+
+	form := url.Values{}
+	form.Set("ids", strconv.FormatInt(id1, 10)+","+strconv.FormatInt(id2, 10))
+
+	req := httptest.NewRequest("POST", "/screenshots/bulk-review", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	ws.handleBulkReviewScreenshots(w, req)
+	if w.Code != http.StatusFound {
+		t.Fatalf("expected 302 redirect, got %d", w.Code)
+	}
+
+	rec1, _ := db.GetScreenshot(id1)
+	rec2, _ := db.GetScreenshot(id2)
+	if !rec1.Reviewed || !rec2.Reviewed {
+		t.Fatalf("expected both screenshots to be marked as reviewed")
+	}
+}
+
+func TestPWAEndpoints(t *testing.T) {
+	ws, _, _, cleanup := setupTestWeb(t)
+	defer cleanup()
+
+	// 1. Service Worker endpoint
+	req := httptest.NewRequest("GET", "/sw.js", nil)
+	w := httptest.NewRecorder()
+	ws.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for /sw.js, got %d", w.Code)
+	}
+	if !strings.Contains(w.Header().Get("Content-Type"), "application/javascript") {
+		t.Fatalf("expected application/javascript Content-Type for /sw.js, got %s", w.Header().Get("Content-Type"))
+	}
+	if w.Header().Get("Service-Worker-Allowed") != "/" {
+		t.Fatalf("expected Service-Worker-Allowed: /, got %s", w.Header().Get("Service-Worker-Allowed"))
+	}
+
+	// 2. Manifest endpoint
+	req = httptest.NewRequest("GET", "/manifest.json", nil)
+	w = httptest.NewRecorder()
+	ws.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for /manifest.json, got %d", w.Code)
+	}
+	if !strings.Contains(w.Header().Get("Content-Type"), "application/manifest+json") {
+		t.Fatalf("expected application/manifest+json Content-Type for /manifest.json, got %s", w.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(w.Body.String(), "Dday AC") {
+		t.Fatalf("expected manifest body to contain 'Dday AC'")
 	}
 }

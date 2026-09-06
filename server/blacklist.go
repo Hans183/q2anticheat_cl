@@ -10,10 +10,11 @@ import (
 
 // Blacklist manages hardcoded + database blacklist entries
 type Blacklist struct {
-	mu        sync.RWMutex
-	db        *database.DB
-	processes map[string]bool
-	modules   map[string]bool
+	mu         sync.RWMutex
+	db         *database.DB
+	processes  map[string]bool
+	modules    map[string]bool
+	sha1s      map[string]bool
 	allEntries []database.BlacklistEntry
 }
 
@@ -22,6 +23,7 @@ func NewBlacklist() *Blacklist {
 	return &Blacklist{
 		processes: make(map[string]bool),
 		modules:   make(map[string]bool),
+		sha1s:     make(map[string]bool),
 	}
 }
 
@@ -109,12 +111,14 @@ func (bl *Blacklist) loadFromDB() {
 		if !e.Enabled {
 			continue
 		}
-		pattern := strings.ToLower(e.Pattern)
+		pattern := strings.ToLower(strings.TrimSpace(e.Pattern))
 		switch e.Type {
 		case "process":
 			bl.processes[pattern] = true
 		case "module":
 			bl.modules[pattern] = true
+		case "sha1":
+			bl.sha1s[pattern] = true
 		}
 		activeCount++
 	}
@@ -131,6 +135,7 @@ func (bl *Blacklist) Reload() {
 	bl.allEntries = nil
 	bl.processes = make(map[string]bool)
 	bl.modules = make(map[string]bool)
+	bl.sha1s = make(map[string]bool)
 	bl.loadFromDB()
 }
 
@@ -213,8 +218,18 @@ func (bl *Blacklist) CheckModule(name string) (bool, string) {
 
 // CheckModuleWithPath checks both module name and path against active patterns
 func (bl *Blacklist) CheckModuleWithPath(name, path string) (bool, string, string) {
+	return bl.CheckModuleFull(name, path, "")
+}
+
+// CheckModuleFull checks module name, path, and SHA1 hash against active patterns
+func (bl *Blacklist) CheckModuleFull(name, path, sha1 string) (bool, string, string) {
 	bl.mu.RLock()
 	defer bl.mu.RUnlock()
+
+	lowerSHA1 := strings.ToLower(strings.TrimSpace(sha1))
+	if lowerSHA1 != "" && bl.sha1s[lowerSHA1] {
+		return true, lowerSHA1, "sha1"
+	}
 
 	lowerName := strings.ToLower(name)
 	lowerPath := strings.ToLower(path)
@@ -234,5 +249,5 @@ func (bl *Blacklist) CheckModuleWithPath(name, path string) (bool, string, strin
 func (bl *Blacklist) Stats() (activeProcesses, activeModules, totalEntries int) {
 	bl.mu.RLock()
 	defer bl.mu.RUnlock()
-	return len(bl.processes), len(bl.modules), len(bl.allEntries)
+	return len(bl.processes), len(bl.modules) + len(bl.sha1s), len(bl.allEntries)
 }

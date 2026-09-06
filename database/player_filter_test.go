@@ -38,7 +38,7 @@ func TestPlayerNameFiltering(t *testing.T) {
 	db.InsertScreenshot(ss2)
 
 	// Partial match on "Sniper"
-	results, count, err := db.GetScreenshots("", "Sniper", "", "", false, 1, 20)
+	results, count, err := db.GetScreenshots("", "Sniper", "", "", "", false, 1, 20)
 	if err != nil {
 		t.Fatalf("GetScreenshots error: %v", err)
 	}
@@ -47,12 +47,21 @@ func TestPlayerNameFiltering(t *testing.T) {
 	}
 
 	// Partial case-insensitive match on "shadow"
-	results, count, err = db.GetScreenshots("", "shadow", "", "", false, 1, 20)
+	results, count, err = db.GetScreenshots("", "shadow", "", "", "", false, 1, 20)
 	if err != nil {
 		t.Fatalf("GetScreenshots error: %v", err)
 	}
 	if count != 1 || len(results) != 1 || results[0].PlayerName != "Shadow[TAG]" {
 		t.Fatalf("expected 1 result for 'shadow', got %d", count)
+	}
+
+	// Server filter match
+	results, count, err = db.GetScreenshots("", "", "127.0.0.1:27910", "", "", false, 1, 20)
+	if err != nil {
+		t.Fatalf("GetScreenshots server filter error: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("expected 2 results for server filter, got %d", count)
 	}
 
 	// 2. Insert violations
@@ -78,7 +87,7 @@ func TestPlayerNameFiltering(t *testing.T) {
 	db.InsertViolation(v2)
 
 	// Partial match on "Killer"
-	vResults, vCount, err := db.GetViolations("", "Killer", "", "", "", 1, 20)
+	vResults, vCount, err := db.GetViolations("", "Killer", "", "", "", "", 1, 20)
 	if err != nil {
 		t.Fatalf("GetViolations error: %v", err)
 	}
@@ -91,11 +100,41 @@ func TestPlayerNameFiltering(t *testing.T) {
 	db.InsertProcessSnapshot("127.0.0.1:27910", "192.168.1.53", "ProGamer", 4, 15, 8, "", "[]", "[]")
 
 	// Exact/Partial match on "ProGamer"
-	psResults, psCount, err := db.GetProcessSnapshots("", "ProGamer", "", "", 1, 20)
+	psResults, psCount, err := db.GetProcessSnapshots("", "ProGamer", "", "", "", 1, 20)
 	if err != nil {
 		t.Fatalf("GetProcessSnapshots error: %v", err)
 	}
 	if psCount != 1 || len(psResults) != 1 || psResults[0].PlayerName != "ProGamer" {
 		t.Fatalf("expected 1 result for 'ProGamer', got %d", psCount)
+	}
+
+	// 4. Test Unified Player Profile
+	profile, err := db.GetPlayerProfile("Sniper")
+	if err != nil {
+		t.Fatalf("GetPlayerProfile error: %v", err)
+	}
+	if profile == nil {
+		t.Fatalf("expected non-nil profile for Sniper")
+	}
+	if profile.PrimaryName != "SniperWolf" {
+		t.Fatalf("expected primary name 'SniperWolf', got '%s'", profile.PrimaryName)
+	}
+	if profile.ScreenshotCount != 1 {
+		t.Fatalf("expected 1 screenshot in profile, got %d", profile.ScreenshotCount)
+	}
+	if profile.ViolationCount != 1 {
+		t.Fatalf("expected 1 violation in profile, got %d", profile.ViolationCount)
+	}
+	if profile.ProcessSnapshotsCount != 1 {
+		t.Fatalf("expected 1 process snapshot in profile, got %d", profile.ProcessSnapshotsCount)
+	}
+
+	// 5. Test Distinct Servers
+	servers, err := db.GetDistinctServers()
+	if err != nil {
+		t.Fatalf("GetDistinctServers error: %v", err)
+	}
+	if len(servers) != 1 || servers[0] != "127.0.0.1:27910" {
+		t.Fatalf("expected ['127.0.0.1:27910'], got %v", servers)
 	}
 }

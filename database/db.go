@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -82,12 +83,39 @@ type ProcessSnapshotRecord struct {
 // BlacklistEntry represents a blacklist pattern
 type BlacklistEntry struct {
 	ID        int64
-	Type      string
+	Type      string // "process", "module", "sha1"
 	Pattern   string
 	Source    string // "hardcoded" or "user"
 	Enabled   bool
 	AddedBy   string
 	CreatedAt time.Time
+}
+
+// PlayerProfile represents a consolidated view of a player across the anticheat system
+type PlayerProfile struct {
+	Query                 string
+	PlayerName            string
+	PrimaryName           string
+	PlayerIP              string
+	KnownNames            []string
+	Aliases               []string
+	KnownIPs              []string
+	IPs                   []string
+	KnownServers          []string
+	Servers               []string
+	TotalScreenshots      int
+	ScreenshotCount       int
+	UnreviewedCount       int
+	TotalViolations       int
+	ViolationCount        int
+	TotalSnapshots        int
+	ProcessSnapshotsCount int
+	FirstSeen             time.Time
+	LastSeen              time.Time
+	Screenshots           []*ScreenshotRecord
+	Violations            []*ViolationRecord
+	Snapshots             []*ProcessSnapshotRecord
+	ProcessSnapshots      []*ProcessSnapshotRecord
 }
 
 // parseTimestamp tries multiple formats to parse a timestamp string from SQLite.
@@ -202,7 +230,7 @@ func (db *DB) migrate() error {
 
 	CREATE TABLE IF NOT EXISTS blacklist (
 		id         INTEGER PRIMARY KEY AUTOINCREMENT,
-		type       TEXT NOT NULL CHECK(type IN ('process', 'module')),
+		type       TEXT NOT NULL CHECK(type IN ('process', 'module', 'sha1')),
 		pattern    TEXT NOT NULL,
 		source     TEXT NOT NULL DEFAULT 'user',
 		enabled    BOOLEAN NOT NULL DEFAULT 1,
@@ -317,6 +345,24 @@ func (db *DB) GetAdminByUsername(username string) (*AdminRecord, error) {
 	return admin, nil
 }
 
+// GetAdminByID retrieves an admin by ID
+func (db *DB) GetAdminByID(id int64) (*AdminRecord, error) {
+	admin := &AdminRecord{}
+	err := db.conn.QueryRow(
+		"SELECT id, username, password, created_at FROM admins WHERE id = ?",
+		id).Scan(&admin.ID, &admin.Username, &admin.Password, &admin.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return admin, nil
+}
+
+// ChangeAdminPassword updates an admin's password hash
+func (db *DB) ChangeAdminPassword(adminID int64, newPasswordHash string) error {
+	_, err := db.conn.Exec("UPDATE admins SET password = ? WHERE id = ?", newPasswordHash, adminID)
+	return err
+}
+
 // CreateSession creates a new login session
 func (db *DB) CreateSession(adminID int64) (string, error) {
 	b := make([]byte, 32)
@@ -380,22 +426,18 @@ func (db *DB) GetScreenshot(id int64) (*ScreenshotRecord, error) {
 	var ts string
 	var notes sql.NullString
 	var clientID sql.NullInt64
-	var format sql.NullString
 	err := db.conn.QueryRow(`
 		SELECT id, server_addr, player_ip, player_name, client_id,
 			width, height, format, file_path, file_size, timestamp, reviewed, notes
 		FROM screenshots WHERE id = ?`, id).Scan(
 		&record.ID, &record.ServerAddr, &record.PlayerIP, &record.PlayerName,
-		&clientID, &record.Width, &record.Height, &format, &record.FilePath,
+		&clientID, &record.Width, &record.Height, &record.Format, &record.FilePath,
 		&record.FileSize, &ts, &record.Reviewed, &notes)
 	if err != nil {
 		return nil, fmt.Errorf("get screenshot: %w", err)
 	}
 	if clientID.Valid {
 		record.ClientID = int(clientID.Int64)
-	}
-	if format.Valid {
-		record.Format = format.String
 	}
 	if notes.Valid {
 		record.Notes = notes.String
@@ -405,7 +447,7 @@ func (db *DB) GetScreenshot(id int64) (*ScreenshotRecord, error) {
 }
 
 // GetScreenshots retrieves screenshots with optional filters
-func (db *DB) GetScreenshots(playerIP, playerName, dateFrom, dateTo string, unreviewedOnly bool, page, perPage int) ([]*ScreenshotRecord, int, error) {
+func (db *DB) GetScreenshots(playerIP, playerName, serverAddr, dateFrom, dateTo string, unreviewedOnly bool, page, perPage int) ([]*ScreenshotRecord, int, error) {
 	where := "1=1"
 	args := []interface{}{}
 
@@ -416,6 +458,10 @@ func (db *DB) GetScreenshots(playerIP, playerName, dateFrom, dateTo string, unre
 	if playerName != "" {
 		where += " AND player_name LIKE ?"
 		args = append(args, "%"+playerName+"%")
+	}
+	if serverAddr != "" {
+		where += " AND server_addr = ?"
+		args = append(args, serverAddr)
 	}
 	if dateFrom != "" {
 		where += " AND timestamp >= ?"
@@ -469,11 +515,81 @@ func (db *DB) GetUnreviewedScreenshots(limit int) ([]*ScreenshotRecord, error) {
 	return scanScreenshots(rows)
 }
 
+// GetRecentScreenshots returns the most recent N screenshots
+func (db *DB) GetRecentScreenshots(limit int) ([]*ScreenshotRecord, error) {
+	if limit <= 0 {
+		limit = 6
+	}
+	rows, err := db.conn.Query(`
+		SELECT id, server_addr, player_ip, player_name, client_id,
+			width, height, format, file_path, file_size, timestamp, reviewed, notes
+		FROM screenshots
+		ORDER BY timestamp DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanScreenshots(rows)
+}
+
 // MarkReviewed marks a screenshot as reviewed
 func (db *DB) MarkReviewed(id int64, notes string) error {
 	_, err := db.conn.Exec(`
 		UPDATE screenshots SET reviewed = 1, notes = ? WHERE id = ?`, notes, id)
 	return err
+}
+
+// MarkAllReviewed marks a list of screenshot IDs as reviewed
+func (db *DB) MarkAllReviewed(ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare("UPDATE screenshots SET reviewed = 1 WHERE id = ?")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, id := range ids {
+		if _, err := stmt.Exec(id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// DeleteOldScreenshots removes reviewed screenshots older than N days
+func (db *DB) DeleteOldScreenshots(days int) (int64, error) {
+	if days <= 0 {
+		days = 30
+	}
+	cutoff := time.Now().AddDate(0, 0, -days).Format("2006-01-02 15:04:05")
+
+	rows, err := db.conn.Query("SELECT id, file_path FROM screenshots WHERE reviewed = 1 AND timestamp < ?", cutoff)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var count int64
+	for rows.Next() {
+		var id int64
+		var filePath string
+		if err := rows.Scan(&id, &filePath); err == nil {
+			if filePath != "" {
+				_ = os.Remove(filePath)
+			}
+			_, _ = db.conn.Exec("DELETE FROM screenshots WHERE id = ?", id)
+			count++
+		}
+	}
+	return count, nil
 }
 
 // InsertViolation stores a new violation record
@@ -491,7 +607,7 @@ func (db *DB) InsertViolation(record *ViolationRecord) (int64, error) {
 }
 
 // GetViolations retrieves violations with optional filters
-func (db *DB) GetViolations(playerIP, playerName, vType, dateFrom, dateTo string, page, perPage int) ([]*ViolationRecord, int, error) {
+func (db *DB) GetViolations(playerIP, playerName, serverAddr, vType, dateFrom, dateTo string, page, perPage int) ([]*ViolationRecord, int, error) {
 	where := "1=1"
 	args := []interface{}{}
 
@@ -502,6 +618,10 @@ func (db *DB) GetViolations(playerIP, playerName, vType, dateFrom, dateTo string
 	if playerName != "" {
 		where += " AND player_name LIKE ?"
 		args = append(args, "%"+playerName+"%")
+	}
+	if serverAddr != "" {
+		where += " AND server_addr = ?"
+		args = append(args, serverAddr)
 	}
 	if vType != "" {
 		where += " AND type = ?"
@@ -539,6 +659,192 @@ func (db *DB) GetViolations(playerIP, playerName, vType, dateFrom, dateTo string
 
 	records, err := scanViolations(rows)
 	return records, total, err
+}
+
+// GetRecentViolations returns the most recent N violations
+func (db *DB) GetRecentViolations(limit int) ([]*ViolationRecord, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	rows, err := db.conn.Query(`
+		SELECT id, server_addr, player_ip, player_name, client_id,
+			type, reason, details, timestamp
+		FROM violations
+		ORDER BY timestamp DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanViolations(rows)
+}
+
+// GetDistinctServers returns all unique server addresses seen in data
+func (db *DB) GetDistinctServers() ([]string, error) {
+	rows, err := db.conn.Query(`
+		SELECT DISTINCT server_addr FROM screenshots WHERE server_addr != ''
+		UNION
+		SELECT DISTINCT server_addr FROM violations WHERE server_addr != ''
+		UNION
+		SELECT DISTINCT server_addr FROM process_snapshots WHERE server_addr != ''
+		ORDER BY 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var servers []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err == nil && s != "" {
+			servers = append(servers, s)
+		}
+	}
+	return servers, nil
+}
+
+// GetPlayerProfile retrieves a consolidated view of a player across all tables
+func (db *DB) GetPlayerProfile(query string) (*PlayerProfile, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, fmt.Errorf("player search query cannot be empty")
+	}
+
+	profile := &PlayerProfile{
+		Query: query,
+	}
+
+	// 1. Find all distinct player_names matching query or associated with matching IP
+	nameRows, err := db.conn.Query(`
+		SELECT DISTINCT player_name FROM screenshots WHERE player_name LIKE ? OR player_ip LIKE ?
+		UNION
+		SELECT DISTINCT player_name FROM violations WHERE player_name LIKE ? OR player_ip LIKE ?
+		UNION
+		SELECT DISTINCT player_name FROM process_snapshots WHERE player_name LIKE ? OR player_ip LIKE ?
+	`, "%"+query+"%", "%"+query+"%", "%"+query+"%", "%"+query+"%", "%"+query+"%", "%"+query+"%")
+	if err == nil {
+		defer nameRows.Close()
+		for nameRows.Next() {
+			var n string
+			if nameRows.Scan(&n) == nil && n != "" {
+				profile.KnownNames = append(profile.KnownNames, n)
+			}
+		}
+	}
+
+	// 2. Find all distinct player_ips matching query or associated with matching name
+	ipRows, err := db.conn.Query(`
+		SELECT DISTINCT player_ip FROM screenshots WHERE player_name LIKE ? OR player_ip LIKE ?
+		UNION
+		SELECT DISTINCT player_ip FROM violations WHERE player_name LIKE ? OR player_ip LIKE ?
+		UNION
+		SELECT DISTINCT player_ip FROM process_snapshots WHERE player_name LIKE ? OR player_ip LIKE ?
+	`, "%"+query+"%", "%"+query+"%", "%"+query+"%", "%"+query+"%", "%"+query+"%", "%"+query+"%")
+	if err == nil {
+		defer ipRows.Close()
+		for ipRows.Next() {
+			var ip string
+			if ipRows.Scan(&ip) == nil && ip != "" {
+				profile.KnownIPs = append(profile.KnownIPs, ip)
+			}
+		}
+	}
+
+	// 3. Find all distinct server_addr
+	srvRows, err := db.conn.Query(`
+		SELECT DISTINCT server_addr FROM screenshots WHERE player_name LIKE ? OR player_ip LIKE ?
+		UNION
+		SELECT DISTINCT server_addr FROM violations WHERE player_name LIKE ? OR player_ip LIKE ?
+		UNION
+		SELECT DISTINCT server_addr FROM process_snapshots WHERE player_name LIKE ? OR player_ip LIKE ?
+	`, "%"+query+"%", "%"+query+"%", "%"+query+"%", "%"+query+"%", "%"+query+"%", "%"+query+"%")
+	if err == nil {
+		defer srvRows.Close()
+		for srvRows.Next() {
+			var s string
+			if srvRows.Scan(&s) == nil && s != "" {
+				profile.KnownServers = append(profile.KnownServers, s)
+			}
+		}
+	}
+
+	profile.Aliases = profile.KnownNames
+	profile.IPs = profile.KnownIPs
+	profile.Servers = profile.KnownServers
+
+	if len(profile.KnownNames) > 0 {
+		profile.PlayerName = profile.KnownNames[0]
+		profile.PrimaryName = profile.KnownNames[0]
+	} else {
+		profile.PlayerName = query
+		profile.PrimaryName = query
+	}
+	if len(profile.KnownIPs) > 0 {
+		profile.PlayerIP = profile.KnownIPs[0]
+	}
+
+	// 4. Fetch screenshots for this player
+	ssRows, err := db.conn.Query(`
+		SELECT id, server_addr, player_ip, player_name, client_id,
+			width, height, format, file_path, file_size, timestamp, reviewed, notes
+		FROM screenshots WHERE player_name LIKE ? OR player_ip LIKE ?
+		ORDER BY timestamp DESC LIMIT 50`, "%"+query+"%", "%"+query+"%")
+	if err == nil {
+		defer ssRows.Close()
+		profile.Screenshots, _ = scanScreenshots(ssRows)
+		profile.TotalScreenshots = len(profile.Screenshots)
+		profile.ScreenshotCount = len(profile.Screenshots)
+		for _, s := range profile.Screenshots {
+			if !s.Reviewed {
+				profile.UnreviewedCount++
+			}
+		}
+	}
+
+	// 5. Fetch violations for this player
+	vRows, err := db.conn.Query(`
+		SELECT id, server_addr, player_ip, player_name, client_id,
+			type, reason, details, timestamp
+		FROM violations WHERE player_name LIKE ? OR player_ip LIKE ?
+		ORDER BY timestamp DESC LIMIT 100`, "%"+query+"%", "%"+query+"%")
+	if err == nil {
+		defer vRows.Close()
+		profile.Violations, _ = scanViolations(vRows)
+		profile.TotalViolations = len(profile.Violations)
+		profile.ViolationCount = len(profile.Violations)
+	}
+
+	// 6. Fetch process snapshots for this player
+	psRows, err := db.conn.Query(`
+		SELECT id, server_addr, player_ip, player_name, client_id,
+			num_processes, num_modules, violations, processes_json, modules_json, timestamp
+		FROM process_snapshots WHERE player_name LIKE ? OR player_ip LIKE ?
+		ORDER BY timestamp DESC LIMIT 50`, "%"+query+"%", "%"+query+"%")
+	if err == nil {
+		defer psRows.Close()
+		profile.Snapshots, _ = scanProcessSnapshots(psRows)
+		profile.ProcessSnapshots = profile.Snapshots
+		profile.TotalSnapshots = len(profile.Snapshots)
+		profile.ProcessSnapshotsCount = len(profile.Snapshots)
+	}
+
+	// First & Last seen
+	var minTs, maxTs sql.NullString
+	_ = db.conn.QueryRow(`
+		SELECT MIN(t), MAX(t) FROM (
+			SELECT timestamp as t FROM screenshots WHERE player_name LIKE ? OR player_ip LIKE ?
+			UNION ALL
+			SELECT timestamp as t FROM violations WHERE player_name LIKE ? OR player_ip LIKE ?
+			UNION ALL
+			SELECT timestamp as t FROM process_snapshots WHERE player_name LIKE ? OR player_ip LIKE ?
+		)`, "%"+query+"%", "%"+query+"%", "%"+query+"%", "%"+query+"%", "%"+query+"%", "%"+query+"%").Scan(&minTs, &maxTs)
+	if minTs.Valid {
+		profile.FirstSeen = parseTimestamp(minTs.String)
+	}
+	if maxTs.Valid {
+		profile.LastSeen = parseTimestamp(maxTs.String)
+	}
+
+	return profile, nil
 }
 
 // GetStats returns statistics about stored data
@@ -645,7 +951,7 @@ func (db *DB) GetProcessSnapshotByID(id int64) (*ProcessSnapshotRecord, error) {
 }
 
 // GetProcessSnapshots retrieves process snapshots with optional filters
-func (db *DB) GetProcessSnapshots(playerIP, playerName, dateFrom, dateTo string, page, perPage int) ([]*ProcessSnapshotRecord, int, error) {
+func (db *DB) GetProcessSnapshots(playerIP, playerName, serverAddr, dateFrom, dateTo string, page, perPage int) ([]*ProcessSnapshotRecord, int, error) {
 	where := "1=1"
 	args := []interface{}{}
 
@@ -656,6 +962,10 @@ func (db *DB) GetProcessSnapshots(playerIP, playerName, dateFrom, dateTo string,
 	if playerName != "" {
 		where += " AND player_name LIKE ?"
 		args = append(args, "%"+playerName+"%")
+	}
+	if serverAddr != "" {
+		where += " AND server_addr = ?"
+		args = append(args, serverAddr)
 	}
 	if dateFrom != "" {
 		where += " AND timestamp >= ?"
@@ -751,7 +1061,7 @@ func (db *DB) AddBlacklistEntry(entryType, pattern, addedBy string) error {
 	if pattern == "" {
 		return fmt.Errorf("blacklist pattern cannot be empty")
 	}
-	if entryType != "process" && entryType != "module" {
+	if entryType != "process" && entryType != "module" && entryType != "sha1" {
 		return fmt.Errorf("invalid blacklist entry type: %s", entryType)
 	}
 	if addedBy == "" {

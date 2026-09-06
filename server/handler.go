@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -404,7 +405,8 @@ func (h *Handler) handleProcessData(gs *GameServer, pd *protocol.ProcessDataMess
 		}
 	}
 	for _, mod := range pd.Modules {
-		if matched, pattern, matchIn := h.blacklist.CheckModuleWithPath(mod.Name, mod.Path); matched {
+		modSHA1Hex := hex.EncodeToString(mod.SHA1[:])
+		if matched, pattern, matchIn := h.blacklist.CheckModuleFull(mod.Name, mod.Path, modSHA1Hex); matched {
 			violations = append(violations, fmt.Sprintf("modulo sospechoso: %s (%s: %s)", mod.Name, matchIn, pattern))
 		}
 	}

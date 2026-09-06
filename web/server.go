@@ -44,18 +44,45 @@ func New(listenAddr string, db *database.DB, handler *server.Handler) *WebServer
 func (ws *WebServer) routes() {
 	ws.mux.HandleFunc("/login", ws.handleLogin)
 	ws.mux.HandleFunc("/logout", ws.handleLogout)
+	ws.mux.HandleFunc("/sw.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript")
+		w.Header().Set("Service-Worker-Allowed", "/")
+		w.Header().Set("Cache-Control", "no-cache")
+		data, err := staticFiles.ReadFile("static/sw.js")
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write(data)
+	})
+	ws.mux.HandleFunc("/manifest.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/manifest+json")
+		data, err := staticFiles.ReadFile("static/manifest.json")
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write(data)
+	})
 	staticFS, _ := fs.Sub(staticFiles, "static")
 	ws.mux.Handle("/static/", http.StripPrefix("/static/",
 		http.FileServer(http.FS(staticFS))))
 	ws.mux.Handle("/", ws.authMiddleware(http.HandlerFunc(ws.handleDashboard)))
+	ws.mux.Handle("/player", ws.authMiddleware(http.HandlerFunc(ws.handlePlayerProfile)))
 	ws.mux.Handle("/screenshots", ws.authMiddleware(http.HandlerFunc(ws.handleScreenshots)))
 	ws.mux.Handle("/screenshots/review", ws.authMiddleware(http.HandlerFunc(ws.handleReviewScreenshot)))
+	ws.mux.Handle("/screenshots/bulk-review", ws.authMiddleware(http.HandlerFunc(ws.handleBulkReviewScreenshots)))
+	ws.mux.Handle("/screenshots/export.csv", ws.authMiddleware(http.HandlerFunc(ws.handleExportScreenshotsCSV)))
 	ws.mux.Handle("/screenshots/image/", ws.authMiddleware(http.HandlerFunc(ws.handleScreenshotImage)))
 	ws.mux.Handle("/violations", ws.authMiddleware(http.HandlerFunc(ws.handleViolations)))
+	ws.mux.Handle("/violations/export.csv", ws.authMiddleware(http.HandlerFunc(ws.handleExportViolationsCSV)))
 	ws.mux.Handle("/process-snapshots", ws.authMiddleware(http.HandlerFunc(ws.handleProcessSnapshots)))
 	ws.mux.Handle("/process-snapshots/", ws.authMiddleware(http.HandlerFunc(ws.handleProcessSnapshotDetail)))
 	ws.mux.Handle("/blacklist", ws.authMiddleware(http.HandlerFunc(ws.handleBlacklist)))
 	ws.mux.Handle("/servers", ws.authMiddleware(http.HandlerFunc(ws.handleServers)))
+	ws.mux.Handle("/settings", ws.authMiddleware(http.HandlerFunc(ws.handleSettings)))
+	ws.mux.Handle("/change-password", ws.authMiddleware(http.HandlerFunc(ws.handleChangePassword)))
+	ws.mux.Handle("/maintenance/purge-screenshots", ws.authMiddleware(http.HandlerFunc(ws.handlePurgeScreenshots)))
 	ws.mux.Handle("/api/stats", ws.authMiddleware(http.HandlerFunc(ws.handleAPIStats)))
 }
 
@@ -153,19 +180,54 @@ func (ws *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		s.ClientsMu.RUnlock()
 	}
 
+	recentViolations, _ := ws.db.GetRecentViolations(5)
+	recentScreenshots, _ := ws.db.GetRecentScreenshots(6)
+
 	data := map[string]interface{}{
-		"Stats":       stats,
-		"ServerCount": serverCount,
-		"ClientCount": clientCount,
-		"CurrentPage": "dashboard",
+		"Stats":             stats,
+		"ServerCount":       serverCount,
+		"ClientCount":       clientCount,
+		"RecentViolations":  recentViolations,
+		"RecentScreenshots": recentScreenshots,
+		"DailyViolations":   stats["daily_violations"],
+		"CurrentPage":       "dashboard",
 	}
 	ws.templates.Execute(w, "dashboard", data)
+}
+
+func (ws *WebServer) handlePlayerProfile(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		q = strings.TrimSpace(r.URL.Query().Get("name"))
+	}
+	if q == "" {
+		q = strings.TrimSpace(r.URL.Query().Get("player"))
+	}
+
+	if q == "" {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+
+	profile, err := ws.db.GetPlayerProfile(q)
+	if err != nil {
+		log.Printf("[WEB] Error getting player profile: %v", err)
+	}
+
+	data := map[string]interface{}{
+		"Profile":     profile,
+		"Query":       q,
+		"CurrentPage": "players",
+	}
+	ws.templates.Execute(w, "player", data)
 }
 
 func (ws *WebServer) handleScreenshots(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	playerIP := strings.TrimSpace(r.URL.Query().Get("player"))
 	playerName := strings.TrimSpace(r.URL.Query().Get("name"))
+	serverAddr := strings.TrimSpace(r.URL.Query().Get("server"))
 	dateFrom := strings.TrimSpace(r.URL.Query().Get("from"))
 	dateTo := strings.TrimSpace(r.URL.Query().Get("to"))
 	unreviewed := r.URL.Query().Get("unreviewed") == "1"
@@ -173,24 +235,33 @@ func (ws *WebServer) handleScreenshots(w http.ResponseWriter, r *http.Request) {
 	if page < 1 {
 		page = 1
 	}
+	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
+	if perPage != 20 && perPage != 50 && perPage != 100 {
+		perPage = 20
+	}
 
-	screenshots, total, err := ws.db.GetScreenshots(playerIP, playerName, dateFrom, dateTo, unreviewed, page, 20)
+	screenshots, total, err := ws.db.GetScreenshots(playerIP, playerName, serverAddr, dateFrom, dateTo, unreviewed, page, perPage)
 	if err != nil {
 		log.Printf("[WEB] Error getting screenshots: %v", err)
 	}
-	totalPages := (total + 19) / 20
+	totalPages := (total + perPage - 1) / perPage
+	distinctServers, _ := ws.db.GetDistinctServers()
 
 	data := map[string]interface{}{
 		"Screenshots":  screenshots,
 		"Total":        total,
 		"Page":         page,
+		"PerPage":      perPage,
 		"TotalPages":   totalPages,
 		"PlayerIP":     playerIP,
 		"PlayerName":   playerName,
+		"ServerAddr":   serverAddr,
+		"Servers":      distinctServers,
 		"DateFrom":     dateFrom,
 		"DateTo":       dateTo,
 		"Unreviewed":   unreviewed,
 		"CurrentPage":  "screenshots",
+		"Msg":          r.URL.Query().Get("msg"),
 	}
 	ws.templates.Execute(w, "screenshots", data)
 }
@@ -209,6 +280,55 @@ func (ws *WebServer) handleReviewScreenshot(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	http.Redirect(w, r, "/screenshots", http.StatusFound)
+}
+
+func (ws *WebServer) handleBulkReviewScreenshots(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Redirect(w, r, "/screenshots", http.StatusFound)
+		return
+	}
+	idsRaw := r.FormValue("ids")
+	var ids []int64
+	for _, idStr := range strings.Split(idsRaw, ",") {
+		idStr = strings.TrimSpace(idStr)
+		if id, err := strconv.ParseInt(idStr, 10, 64); err == nil && id > 0 {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) > 0 {
+		ws.db.MarkAllReviewed(ids)
+	}
+	http.Redirect(w, r, "/screenshots?msg=bulk_reviewed", http.StatusFound)
+}
+
+func (ws *WebServer) handleExportScreenshotsCSV(w http.ResponseWriter, r *http.Request) {
+	playerIP := strings.TrimSpace(r.URL.Query().Get("player"))
+	playerName := strings.TrimSpace(r.URL.Query().Get("name"))
+	serverAddr := strings.TrimSpace(r.URL.Query().Get("server"))
+	dateFrom := strings.TrimSpace(r.URL.Query().Get("from"))
+	dateTo := strings.TrimSpace(r.URL.Query().Get("to"))
+	unreviewed := r.URL.Query().Get("unreviewed") == "1"
+
+	screenshots, _, err := ws.db.GetScreenshots(playerIP, playerName, serverAddr, dateFrom, dateTo, unreviewed, 1, 5000)
+	if err != nil {
+		http.Error(w, "Error retrieving screenshots", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"screenshots.csv\"")
+
+	fmt.Fprintf(w, "ID,Fecha,Servidor,Jugador,IP,Revisado,Notas\n")
+	for _, s := range screenshots {
+		fmt.Fprintf(w, "%d,\"%s\",\"%s\",\"%s\",\"%s\",%t,\"%s\"\n",
+			s.ID,
+			s.Timestamp.Format("2006-01-02 15:04:05"),
+			s.ServerAddr,
+			strings.ReplaceAll(s.PlayerName, "\"", "\"\""),
+			s.PlayerIP,
+			s.Reviewed,
+			strings.ReplaceAll(s.Notes, "\"", "\"\""))
+	}
 }
 
 func (ws *WebServer) handleScreenshotImage(w http.ResponseWriter, r *http.Request) {
@@ -232,6 +352,7 @@ func (ws *WebServer) handleViolations(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	playerIP := strings.TrimSpace(r.URL.Query().Get("player"))
 	playerName := strings.TrimSpace(r.URL.Query().Get("name"))
+	serverAddr := strings.TrimSpace(r.URL.Query().Get("server"))
 	vType := strings.TrimSpace(r.URL.Query().Get("type"))
 	dateFrom := strings.TrimSpace(r.URL.Query().Get("from"))
 	dateTo := strings.TrimSpace(r.URL.Query().Get("to"))
@@ -239,20 +360,28 @@ func (ws *WebServer) handleViolations(w http.ResponseWriter, r *http.Request) {
 	if page < 1 {
 		page = 1
 	}
+	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
+	if perPage != 20 && perPage != 50 && perPage != 100 {
+		perPage = 50
+	}
 
-	violations, total, err := ws.db.GetViolations(playerIP, playerName, vType, dateFrom, dateTo, page, 50)
+	violations, total, err := ws.db.GetViolations(playerIP, playerName, serverAddr, vType, dateFrom, dateTo, page, perPage)
 	if err != nil {
 		log.Printf("[WEB] Error getting violations: %v", err)
 	}
-	totalPages := (total + 49) / 50
+	totalPages := (total + perPage - 1) / perPage
+	distinctServers, _ := ws.db.GetDistinctServers()
 
 	data := map[string]interface{}{
 		"Violations":  violations,
 		"Total":       total,
 		"Page":        page,
+		"PerPage":     perPage,
 		"TotalPages":  totalPages,
 		"PlayerIP":    playerIP,
 		"PlayerName":  playerName,
+		"ServerAddr":  serverAddr,
+		"Servers":     distinctServers,
 		"Type":        vType,
 		"DateFrom":    dateFrom,
 		"DateTo":      dateTo,
@@ -261,22 +390,59 @@ func (ws *WebServer) handleViolations(w http.ResponseWriter, r *http.Request) {
 	ws.templates.Execute(w, "violations", data)
 }
 
+func (ws *WebServer) handleExportViolationsCSV(w http.ResponseWriter, r *http.Request) {
+	playerIP := strings.TrimSpace(r.URL.Query().Get("player"))
+	playerName := strings.TrimSpace(r.URL.Query().Get("name"))
+	serverAddr := strings.TrimSpace(r.URL.Query().Get("server"))
+	vType := strings.TrimSpace(r.URL.Query().Get("type"))
+	dateFrom := strings.TrimSpace(r.URL.Query().Get("from"))
+	dateTo := strings.TrimSpace(r.URL.Query().Get("to"))
+
+	violations, _, err := ws.db.GetViolations(playerIP, playerName, serverAddr, vType, dateFrom, dateTo, 1, 5000)
+	if err != nil {
+		http.Error(w, "Error retrieving violations", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"violations.csv\"")
+
+	fmt.Fprintf(w, "ID,Fecha,Servidor,Jugador,IP,Tipo,Razon,Detalles\n")
+	for _, v := range violations {
+		fmt.Fprintf(w, "%d,\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"\n",
+			v.ID,
+			v.Timestamp.Format("2006-01-02 15:04:05"),
+			v.ServerAddr,
+			strings.ReplaceAll(v.PlayerName, "\"", "\"\""),
+			v.PlayerIP,
+			v.Type,
+			strings.ReplaceAll(v.Reason, "\"", "\"\""),
+			strings.ReplaceAll(v.Details, "\"", "\"\""))
+	}
+}
+
 func (ws *WebServer) handleProcessSnapshots(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	playerIP := strings.TrimSpace(r.URL.Query().Get("player"))
 	playerName := strings.TrimSpace(r.URL.Query().Get("name"))
+	serverAddr := strings.TrimSpace(r.URL.Query().Get("server"))
 	dateFrom := strings.TrimSpace(r.URL.Query().Get("from"))
 	dateTo := strings.TrimSpace(r.URL.Query().Get("to"))
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	if page < 1 {
 		page = 1
 	}
+	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
+	if perPage != 20 && perPage != 50 && perPage != 100 {
+		perPage = 20
+	}
 
-	snapshots, total, err := ws.db.GetProcessSnapshots(playerIP, playerName, dateFrom, dateTo, page, 20)
+	snapshots, total, err := ws.db.GetProcessSnapshots(playerIP, playerName, serverAddr, dateFrom, dateTo, page, perPage)
 	if err != nil {
 		log.Printf("[WEB] Error getting process snapshots: %v", err)
 	}
-	totalPages := (total + 19) / 20
+	totalPages := (total + perPage - 1) / perPage
+	distinctServers, _ := ws.db.GetDistinctServers()
 
 	data := map[string]interface{}{
 		"Snapshots":   snapshots,
@@ -286,9 +452,12 @@ func (ws *WebServer) handleProcessSnapshots(w http.ResponseWriter, r *http.Reque
 		"CurrentPage": "process-snapshots",
 		"PlayerIP":    playerIP,
 		"PlayerName":  playerName,
+		"ServerAddr":  serverAddr,
+		"Servers":     distinctServers,
 		"DateFrom":    dateFrom,
 		"DateTo":      dateTo,
 		"Page":        page,
+		"PerPage":     perPage,
 	}
 	ws.templates.Execute(w, "process-snapshots", data)
 }
@@ -348,7 +517,7 @@ func (ws *WebServer) handleProcessSnapshotDetail(w http.ResponseWriter, r *http.
 		}
 	}
 	for i := range modules {
-		if matched, pattern, _ := bl.CheckModuleWithPath(modules[i].Name, modules[i].Path); matched {
+		if matched, pattern, _ := bl.CheckModuleFull(modules[i].Name, modules[i].Path, modules[i].SHA1); matched {
 			modules[i].Suspicious = true
 			modules[i].MatchPattern = pattern
 		}
@@ -445,6 +614,105 @@ func (ws *WebServer) handleServers(w http.ResponseWriter, r *http.Request) {
 		"CurrentPage": "servers",
 	}
 	ws.templates.Execute(w, "servers", data)
+}
+
+func (ws *WebServer) handleSettings(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	cookie, _ := r.Cookie("session")
+	var adminUser string
+	if cookie != nil {
+		sess, err := ws.db.GetSession(cookie.Value)
+		if err == nil {
+			admin, err := ws.db.GetAdminByID(sess.AdminID)
+			if err == nil {
+				adminUser = admin.Username
+			}
+		}
+	}
+	stats, _ := ws.db.GetStats()
+
+	data := map[string]interface{}{
+		"AdminUser":   adminUser,
+		"Stats":       stats,
+		"CurrentPage": "settings",
+		"Msg":         r.URL.Query().Get("msg"),
+		"Error":       r.URL.Query().Get("error"),
+		"Count":       r.URL.Query().Get("count"),
+	}
+	ws.templates.Execute(w, "settings", data)
+}
+
+func (ws *WebServer) handleChangePassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Redirect(w, r, "/settings", http.StatusFound)
+		return
+	}
+
+	cookie, _ := r.Cookie("session")
+	if cookie == nil {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	sess, err := ws.db.GetSession(cookie.Value)
+	if err != nil {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+
+	admin, err := ws.db.GetAdminByID(sess.AdminID)
+	if err != nil {
+		http.Redirect(w, r, "/settings?error=admin_not_found", http.StatusFound)
+		return
+	}
+
+	oldPass := r.FormValue("old_password")
+	newPass := r.FormValue("new_password")
+	confirmPass := r.FormValue("confirm_password")
+
+	if !CheckPassword(admin.Password, oldPass) {
+		http.Redirect(w, r, "/settings?error=wrong_old_password", http.StatusFound)
+		return
+	}
+
+	if len(newPass) < 4 {
+		http.Redirect(w, r, "/settings?error=password_too_short", http.StatusFound)
+		return
+	}
+
+	if newPass != confirmPass {
+		http.Redirect(w, r, "/settings?error=passwords_do_not_match", http.StatusFound)
+		return
+	}
+
+	newHash := HashPassword(newPass)
+	if err := ws.db.ChangeAdminPassword(admin.ID, newHash); err != nil {
+		log.Printf("[WEB] Error changing password: %v", err)
+		http.Redirect(w, r, "/settings?error=db_error", http.StatusFound)
+		return
+	}
+
+	http.Redirect(w, r, "/settings?msg=password_updated", http.StatusFound)
+}
+
+func (ws *WebServer) handlePurgeScreenshots(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Redirect(w, r, "/settings", http.StatusFound)
+		return
+	}
+
+	days, _ := strconv.Atoi(r.FormValue("days"))
+	if days <= 0 {
+		days = 30
+	}
+
+	count, err := ws.db.DeleteOldScreenshots(days)
+	if err != nil {
+		log.Printf("[WEB] Error purging screenshots: %v", err)
+		http.Redirect(w, r, "/settings?error=purge_failed", http.StatusFound)
+		return
+	}
+
+	http.Redirect(w, r, fmt.Sprintf("/settings?msg=purged&count=%d", count), http.StatusFound)
 }
 
 func (ws *WebServer) handleAPIStats(w http.ResponseWriter, r *http.Request) {
