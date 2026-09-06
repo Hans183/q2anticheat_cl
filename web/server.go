@@ -164,16 +164,17 @@ func (ws *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 func (ws *WebServer) handleScreenshots(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	playerIP := r.URL.Query().Get("player")
-	dateFrom := r.URL.Query().Get("from")
-	dateTo := r.URL.Query().Get("to")
+	playerIP := strings.TrimSpace(r.URL.Query().Get("player"))
+	playerName := strings.TrimSpace(r.URL.Query().Get("name"))
+	dateFrom := strings.TrimSpace(r.URL.Query().Get("from"))
+	dateTo := strings.TrimSpace(r.URL.Query().Get("to"))
 	unreviewed := r.URL.Query().Get("unreviewed") == "1"
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	if page < 1 {
 		page = 1
 	}
 
-	screenshots, total, err := ws.db.GetScreenshots(playerIP, dateFrom, dateTo, unreviewed, page, 20)
+	screenshots, total, err := ws.db.GetScreenshots(playerIP, playerName, dateFrom, dateTo, unreviewed, page, 20)
 	if err != nil {
 		log.Printf("[WEB] Error getting screenshots: %v", err)
 	}
@@ -185,6 +186,7 @@ func (ws *WebServer) handleScreenshots(w http.ResponseWriter, r *http.Request) {
 		"Page":         page,
 		"TotalPages":   totalPages,
 		"PlayerIP":     playerIP,
+		"PlayerName":   playerName,
 		"DateFrom":     dateFrom,
 		"DateTo":       dateTo,
 		"Unreviewed":   unreviewed,
@@ -228,16 +230,17 @@ func (ws *WebServer) handleScreenshotImage(w http.ResponseWriter, r *http.Reques
 
 func (ws *WebServer) handleViolations(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	playerIP := r.URL.Query().Get("player")
-	vType := r.URL.Query().Get("type")
-	dateFrom := r.URL.Query().Get("from")
-	dateTo := r.URL.Query().Get("to")
+	playerIP := strings.TrimSpace(r.URL.Query().Get("player"))
+	playerName := strings.TrimSpace(r.URL.Query().Get("name"))
+	vType := strings.TrimSpace(r.URL.Query().Get("type"))
+	dateFrom := strings.TrimSpace(r.URL.Query().Get("from"))
+	dateTo := strings.TrimSpace(r.URL.Query().Get("to"))
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	if page < 1 {
 		page = 1
 	}
 
-	violations, total, err := ws.db.GetViolations(playerIP, vType, dateFrom, dateTo, page, 50)
+	violations, total, err := ws.db.GetViolations(playerIP, playerName, vType, dateFrom, dateTo, page, 50)
 	if err != nil {
 		log.Printf("[WEB] Error getting violations: %v", err)
 	}
@@ -249,6 +252,7 @@ func (ws *WebServer) handleViolations(w http.ResponseWriter, r *http.Request) {
 		"Page":        page,
 		"TotalPages":  totalPages,
 		"PlayerIP":    playerIP,
+		"PlayerName":  playerName,
 		"Type":        vType,
 		"DateFrom":    dateFrom,
 		"DateTo":      dateTo,
@@ -259,15 +263,16 @@ func (ws *WebServer) handleViolations(w http.ResponseWriter, r *http.Request) {
 
 func (ws *WebServer) handleProcessSnapshots(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	playerIP := r.URL.Query().Get("player")
-	dateFrom := r.URL.Query().Get("from")
-	dateTo := r.URL.Query().Get("to")
+	playerIP := strings.TrimSpace(r.URL.Query().Get("player"))
+	playerName := strings.TrimSpace(r.URL.Query().Get("name"))
+	dateFrom := strings.TrimSpace(r.URL.Query().Get("from"))
+	dateTo := strings.TrimSpace(r.URL.Query().Get("to"))
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	if page < 1 {
 		page = 1
 	}
 
-	snapshots, total, err := ws.db.GetProcessSnapshots(playerIP, dateFrom, dateTo, page, 20)
+	snapshots, total, err := ws.db.GetProcessSnapshots(playerIP, playerName, dateFrom, dateTo, page, 20)
 	if err != nil {
 		log.Printf("[WEB] Error getting process snapshots: %v", err)
 	}
@@ -280,6 +285,7 @@ func (ws *WebServer) handleProcessSnapshots(w http.ResponseWriter, r *http.Reque
 		"HasNext":     page < totalPages,
 		"CurrentPage": "process-snapshots",
 		"PlayerIP":    playerIP,
+		"PlayerName":  playerName,
 		"DateFrom":    dateFrom,
 		"DateTo":      dateTo,
 		"Page":        page,

@@ -70,7 +70,8 @@ var templates = map[string]string{
 <div class="content">
 <div class="card"><div class="card-header"><h3>Filtros</h3></div><div class="card-body">
   <form method="GET" action="/screenshots" class="filter-form"><div class="form-row">
-    <div class="form-group"><label>Jugador IP</label><input type="text" name="player" value="{{.PlayerIP}}" placeholder="Filtrar por IP..."></div>
+    <div class="form-group"><label>Nombre Jugador</label><input type="text" name="name" value="{{.PlayerName}}" placeholder="Buscar nombre..."></div>
+    <div class="form-group"><label>IP Jugador</label><input type="text" name="player" value="{{.PlayerIP}}" placeholder="Filtrar por IP..."></div>
     <div class="form-group"><label>Desde</label><input type="date" name="from" value="{{.DateFrom}}"></div>
     <div class="form-group"><label>Hasta</label><input type="date" name="to" value="{{.DateTo}}"></div>
     <div class="form-group"><label>&nbsp;</label><label class="checkbox-label"><input type="checkbox" name="unreviewed" value="1" {{if .Unreviewed}}checked{{end}}> Solo sin revisar</label></div>
@@ -101,9 +102,9 @@ var templates = map[string]string{
   </div>
 {{end}}</div>
 {{if gt .TotalPages 1}}<div class="pagination">
-  {{if gt .Page 1}}<a href="?page={{sub .Page 1}}&player={{.PlayerIP}}&from={{.DateFrom}}&to={{.DateTo}}{{if .Unreviewed}}&unreviewed=1{{end}}" class="btn btn-sm">Anterior</a>{{end}}
+  {{if gt .Page 1}}<a href="?page={{sub .Page 1}}&name={{.PlayerName}}&player={{.PlayerIP}}&from={{.DateFrom}}&to={{.DateTo}}{{if .Unreviewed}}&unreviewed=1{{end}}" class="btn btn-sm">Anterior</a>{{end}}
   <span class="page-info">Pagina {{.Page}} de {{.TotalPages}}</span>
-  {{if lt .Page .TotalPages}}<a href="?page={{add .Page 1}}&player={{.PlayerIP}}&from={{.DateFrom}}&to={{.DateTo}}{{if .Unreviewed}}&unreviewed=1{{end}}" class="btn btn-sm">Siguiente</a>{{end}}
+  {{if lt .Page .TotalPages}}<a href="?page={{add .Page 1}}&name={{.PlayerName}}&player={{.PlayerIP}}&from={{.DateFrom}}&to={{.DateTo}}{{if .Unreviewed}}&unreviewed=1{{end}}" class="btn btn-sm">Siguiente</a>{{end}}
 </div>{{end}}
 {{else}}<div class="empty-state"><p>No se encontraron screenshots</p></div>{{end}}
 </div></div>
@@ -130,7 +131,8 @@ var templates = map[string]string{
 <div class="content">
 <div class="card"><div class="card-header"><h3>Filtros</h3></div><div class="card-body">
   <form method="GET" action="/violations" class="filter-form"><div class="form-row">
-    <div class="form-group"><label>Jugador IP</label><input type="text" name="player" value="{{.PlayerIP}}" placeholder="Filtrar por IP..."></div>
+    <div class="form-group"><label>Nombre Jugador</label><input type="text" name="name" value="{{.PlayerName}}" placeholder="Buscar nombre..."></div>
+    <div class="form-group"><label>IP Jugador</label><input type="text" name="player" value="{{.PlayerIP}}" placeholder="Filtrar por IP..."></div>
     <div class="form-group"><label>Tipo</label><select name="type">
       <option value="">Todos</option>
       <option value="file" {{if eq .Type "file"}}selected{{end}}>Archivos</option>
@@ -151,9 +153,9 @@ var templates = map[string]string{
   <td>{{.Reason}}</td>
 </tr>{{end}}</tbody></table></div>
 {{if gt .TotalPages 1}}<div class="pagination">
-  {{if gt .Page 1}}<a href="?page={{sub .Page 1}}&player={{.PlayerIP}}&type={{.Type}}&from={{.DateFrom}}&to={{.DateTo}}" class="btn btn-sm">Anterior</a>{{end}}
+  {{if gt .Page 1}}<a href="?page={{sub .Page 1}}&name={{.PlayerName}}&player={{.PlayerIP}}&type={{.Type}}&from={{.DateFrom}}&to={{.DateTo}}" class="btn btn-sm">Anterior</a>{{end}}
   <span class="page-info">Pagina {{.Page}} de {{.TotalPages}}</span>
-  {{if lt .Page .TotalPages}}<a href="?page={{add .Page 1}}&player={{.PlayerIP}}&type={{.Type}}&from={{.DateFrom}}&to={{.DateTo}}" class="btn btn-sm">Siguiente</a>{{end}}
+  {{if lt .Page .TotalPages}}<a href="?page={{add .Page 1}}&name={{.PlayerName}}&player={{.PlayerIP}}&type={{.Type}}&from={{.DateFrom}}&to={{.DateTo}}" class="btn btn-sm">Siguiente</a>{{end}}
 </div>{{end}}
 {{else}}<div class="empty-state"><p>No se encontraron violaciones</p></div>{{end}}
 </div></div>
@@ -215,7 +217,8 @@ var templates = map[string]string{
 <div class="content">
 <div class="card"><div class="card-header"><h3>Filtros</h3></div><div class="card-body">
   <form method="GET" action="/process-snapshots" class="filter-form"><div class="form-row">
-    <div class="form-group"><label>Jugador IP</label><input type="text" name="player" value="{{.PlayerIP}}" placeholder="Filtrar por IP..."></div>
+    <div class="form-group"><label>Nombre Jugador</label><input type="text" name="name" value="{{.PlayerName}}" placeholder="Buscar nombre..."></div>
+    <div class="form-group"><label>IP Jugador</label><input type="text" name="player" value="{{.PlayerIP}}" placeholder="Filtrar por IP..."></div>
     <div class="form-group"><label>Desde</label><input type="date" name="from" value="{{.DateFrom}}"></div>
     <div class="form-group"><label>Hasta</label><input type="date" name="to" value="{{.DateTo}}"></div>
     <div class="form-group"><label>&nbsp;</label><button type="submit" class="btn btn-primary">Filtrar</button></div>
@@ -240,9 +243,9 @@ var templates = map[string]string{
 </table></div>
 {{if gt .TotalPages 1}}
 <div class="pagination">
-  {{if gt .Page 1}}<a href="?page={{sub .Page 1}}&player={{.PlayerIP}}&from={{.DateFrom}}&to={{.DateTo}}" class="btn btn-sm">Anterior</a>{{end}}
+  {{if gt .Page 1}}<a href="?page={{sub .Page 1}}&name={{.PlayerName}}&player={{.PlayerIP}}&from={{.DateFrom}}&to={{.DateTo}}" class="btn btn-sm">Anterior</a>{{end}}
   <span class="page-info">Pagina {{.Page}} de {{.TotalPages}}</span>
-  {{if .HasNext}}<a href="?page={{add .Page 1}}&player={{.PlayerIP}}&from={{.DateFrom}}&to={{.DateTo}}" class="btn btn-sm">Siguiente</a>{{end}}
+  {{if .HasNext}}<a href="?page={{add .Page 1}}&name={{.PlayerName}}&player={{.PlayerIP}}&from={{.DateFrom}}&to={{.DateTo}}" class="btn btn-sm">Siguiente</a>{{end}}
 </div>
 {{end}}
 {{else}}<div class="empty-state"><p>No se encontraron process snapshots</p></div>{{end}}

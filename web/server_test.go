@@ -146,3 +146,44 @@ func TestWebBlacklistActions(t *testing.T) {
 		t.Fatalf("expected delete action form in blacklist table")
 	}
 }
+
+func TestWebPlayerFiltering(t *testing.T) {
+	ws, _, _, cleanup := setupTestWeb(t)
+	defer cleanup()
+
+	// 1. Screenshots filter
+	req := httptest.NewRequest("GET", "/screenshots?name=Sniper", nil)
+	w := httptest.NewRecorder()
+	ws.handleScreenshots(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "name=\"name\" value=\"Sniper\"") {
+		t.Fatalf("expected name input with 'Sniper' value in HTML")
+	}
+
+	// 2. Violations filter
+	req = httptest.NewRequest("GET", "/violations?name=Killer", nil)
+	w = httptest.NewRecorder()
+	ws.handleViolations(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", w.Code)
+	}
+	body = w.Body.String()
+	if !strings.Contains(body, "name=\"name\" value=\"Killer\"") {
+		t.Fatalf("expected name input with 'Killer' value in HTML")
+	}
+
+	// 3. Process Snapshots filter
+	req = httptest.NewRequest("GET", "/process-snapshots?name=ProGamer", nil)
+	w = httptest.NewRecorder()
+	ws.handleProcessSnapshots(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", w.Code)
+	}
+	body = w.Body.String()
+	if !strings.Contains(body, "name=\"name\" value=\"ProGamer\"") {
+		t.Fatalf("expected name input with 'ProGamer' value in HTML")
+	}
+}

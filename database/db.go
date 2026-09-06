@@ -146,6 +146,7 @@ func (db *DB) migrate() error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_screenshots_player ON screenshots(player_ip);
+	CREATE INDEX IF NOT EXISTS idx_screenshots_player_name ON screenshots(player_name);
 	CREATE INDEX IF NOT EXISTS idx_screenshots_date ON screenshots(timestamp);
 	CREATE INDEX IF NOT EXISTS idx_screenshots_server ON screenshots(server_addr);
 
@@ -162,6 +163,7 @@ func (db *DB) migrate() error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_violations_player ON violations(player_ip);
+	CREATE INDEX IF NOT EXISTS idx_violations_player_name ON violations(player_name);
 	CREATE INDEX IF NOT EXISTS idx_violations_date ON violations(timestamp);
 	CREATE INDEX IF NOT EXISTS idx_violations_type ON violations(type);
 
@@ -194,6 +196,7 @@ func (db *DB) migrate() error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_process_snapshots_player ON process_snapshots(player_ip);
+	CREATE INDEX IF NOT EXISTS idx_process_snapshots_player_name ON process_snapshots(player_name);
 	CREATE INDEX IF NOT EXISTS idx_process_snapshots_date ON process_snapshots(timestamp);
 	CREATE INDEX IF NOT EXISTS idx_process_snapshots_server ON process_snapshots(server_addr);
 
@@ -402,13 +405,17 @@ func (db *DB) GetScreenshot(id int64) (*ScreenshotRecord, error) {
 }
 
 // GetScreenshots retrieves screenshots with optional filters
-func (db *DB) GetScreenshots(playerIP, dateFrom, dateTo string, unreviewedOnly bool, page, perPage int) ([]*ScreenshotRecord, int, error) {
+func (db *DB) GetScreenshots(playerIP, playerName, dateFrom, dateTo string, unreviewedOnly bool, page, perPage int) ([]*ScreenshotRecord, int, error) {
 	where := "1=1"
 	args := []interface{}{}
 
 	if playerIP != "" {
 		where += " AND player_ip LIKE ?"
 		args = append(args, "%"+playerIP+"%")
+	}
+	if playerName != "" {
+		where += " AND player_name LIKE ?"
+		args = append(args, "%"+playerName+"%")
 	}
 	if dateFrom != "" {
 		where += " AND timestamp >= ?"
@@ -484,13 +491,17 @@ func (db *DB) InsertViolation(record *ViolationRecord) (int64, error) {
 }
 
 // GetViolations retrieves violations with optional filters
-func (db *DB) GetViolations(playerIP, vType, dateFrom, dateTo string, page, perPage int) ([]*ViolationRecord, int, error) {
+func (db *DB) GetViolations(playerIP, playerName, vType, dateFrom, dateTo string, page, perPage int) ([]*ViolationRecord, int, error) {
 	where := "1=1"
 	args := []interface{}{}
 
 	if playerIP != "" {
 		where += " AND player_ip LIKE ?"
 		args = append(args, "%"+playerIP+"%")
+	}
+	if playerName != "" {
+		where += " AND player_name LIKE ?"
+		args = append(args, "%"+playerName+"%")
 	}
 	if vType != "" {
 		where += " AND type = ?"
@@ -634,13 +645,17 @@ func (db *DB) GetProcessSnapshotByID(id int64) (*ProcessSnapshotRecord, error) {
 }
 
 // GetProcessSnapshots retrieves process snapshots with optional filters
-func (db *DB) GetProcessSnapshots(playerIP, dateFrom, dateTo string, page, perPage int) ([]*ProcessSnapshotRecord, int, error) {
+func (db *DB) GetProcessSnapshots(playerIP, playerName, dateFrom, dateTo string, page, perPage int) ([]*ProcessSnapshotRecord, int, error) {
 	where := "1=1"
 	args := []interface{}{}
 
 	if playerIP != "" {
 		where += " AND player_ip LIKE ?"
 		args = append(args, "%"+playerIP+"%")
+	}
+	if playerName != "" {
+		where += " AND player_name LIKE ?"
+		args = append(args, "%"+playerName+"%")
 	}
 	if dateFrom != "" {
 		where += " AND timestamp >= ?"
