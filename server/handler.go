@@ -88,6 +88,9 @@ func (h *Handler) HandleMessage(gs *GameServer, buf []byte) {
 	case protocol.ACC_CVARCHANGE:
 		h.handleCvarChange(gs, msg.CvarChange)
 
+	case protocol.ACC_SPIKEDMODEL:
+		h.handleSpikedModel(gs, msg.SpikedModel)
+
 	default:
 		log.Printf("[HANDLER] Unknown message type %d from %s", msg.Type, gs.RemoteAddr)
 	}
@@ -560,6 +563,41 @@ func (h *Handler) handleCvarChange(gs *GameServer, cc *protocol.CvarChangeMessag
 			client.CvarTamperCount = 0
 		}
 	}
+}
+
+// handleSpikedModel handles ACC_SPIKEDMODEL (client-reported rejected
+// player/weapon geometry). A spiked model is a wallhack vector, so the
+// player is kicked immediately and the violation is recorded.
+func (h *Handler) handleSpikedModel(gs *GameServer, sm *protocol.SpikedModelMessage) {
+	if sm == nil {
+		return
+	}
+
+	client := gs.GetClient(sm.ClientID)
+	playerIP := ""
+	playerName := ""
+	if client != nil {
+		if client.IP != nil {
+			playerIP = client.IP.String()
+		}
+		if client.Name != "" {
+			playerName = client.Name
+		}
+	}
+
+	reason := "spiked model geometry: " + sm.Path
+	clientMsg := "Anticheat: geometria de modelo invalida detectada"
+
+	log.Printf("[HANDLER] Spiked model from %s: client=%d, %s, path=%s",
+		gs.RemoteAddr, sm.ClientID, playerName, sm.Path)
+
+	if h.OnViolation != nil {
+		h.OnViolation(gs.RemoteAddr.String(), playerIP, playerName, sm.ClientID,
+			"spikedmodel", reason)
+	}
+
+	log.Printf("[HANDLER] Kicking client %d from %s: %s", sm.ClientID, gs.RemoteAddr, reason)
+	gs.SendViolation(sm.ClientID, sm.Challenge, reason, clientMsg)
 }
 
 // compareCvar checks a client's cvar value against expected check rules.

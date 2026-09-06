@@ -50,6 +50,8 @@ const (
 	ACC_HOSTNAMEUPDATE    ClientByte = 13
 	// Real-time client cvar change report
 	ACC_CVARCHANGE        ClientByte = 14
+	// Client-reported spiked model (rejected player/weapon geometry)
+	ACC_SPIKEDMODEL       ClientByte = 15
 )
 
 // Cvar comparison operators

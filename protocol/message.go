@@ -21,6 +21,7 @@ type Message struct {
 	NameUpdate *NameUpdateMessage
 	HostnameUpdate *HostnameUpdateMessage
 	CvarChange *CvarChangeMessage
+	SpikedModel *SpikedModelMessage
 }
 
 // ClientFileData represents a single file hash reported by the client
@@ -92,6 +93,15 @@ type CvarChangeMessage struct {
 	ClientID  uint32
 	Challenge uint32
 	Cvars     []CvarChangeEntry
+}
+
+// SpikedModelMessage contains a client-reported rejected spiked model
+// (ACC_SPIKEDMODEL). Player/weapon models whose geometry exceeds the
+// anticheat limit are reported so the server can kick and record the player.
+type SpikedModelMessage struct {
+	ClientID  uint32
+	Challenge uint32
+	Path      string
 }
 
 // VersionMessage is sent by q2pro server during handshake (ACC_VERSION)
@@ -248,6 +258,12 @@ func ParseMessage(buf []byte) (*Message, error) {
 		err := parseCvarChangeMessage(r, msg)
 		if err != nil {
 			return nil, fmt.Errorf("parse cvar change: %w", err)
+		}
+
+	case ACC_SPIKEDMODEL:
+		err := parseSpikedModelMessage(r, msg)
+		if err != nil {
+			return nil, fmt.Errorf("parse spiked model: %w", err)
 		}
 
 	default:
@@ -738,6 +754,30 @@ func parseCvarChangeMessage(r *Reader, msg *Message) error {
 		Cvars: []CvarChangeEntry{
 			{Name: name, Value: value},
 		},
+	}
+	return nil
+}
+
+func parseSpikedModelMessage(r *Reader, msg *Message) error {
+	clientID, err := r.ReadUint32()
+	if err != nil {
+		return err
+	}
+
+	challenge, err := r.ReadUint32()
+	if err != nil {
+		return err
+	}
+
+	path, err := r.ReadString()
+	if err != nil {
+		return err
+	}
+
+	msg.SpikedModel = &SpikedModelMessage{
+		ClientID:  clientID,
+		Challenge: challenge,
+		Path:      path,
 	}
 	return nil
 }
