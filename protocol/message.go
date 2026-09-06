@@ -20,6 +20,7 @@ type Message struct {
 	ProcessData *ProcessDataMessage
 	NameUpdate *NameUpdateMessage
 	HostnameUpdate *HostnameUpdateMessage
+	CvarChange *CvarChangeMessage
 }
 
 // ClientFileData represents a single file hash reported by the client
@@ -77,6 +78,20 @@ type NameUpdateMessage struct {
 // HostnameUpdateMessage contains a server hostname change (ACC_HOSTNAMEUPDATE)
 type HostnameUpdateMessage struct {
 	Hostname string
+}
+
+// CvarChangeEntry represents a single cvar value change reported by the client
+type CvarChangeEntry struct {
+	Name  string
+	Value string
+}
+
+// CvarChangeMessage contains a real-time cvar change from a client (ACC_CVARCHANGE).
+// One message per changed cvar.
+type CvarChangeMessage struct {
+	ClientID  uint32
+	Challenge uint32
+	Cvars     []CvarChangeEntry
 }
 
 // VersionMessage is sent by q2pro server during handshake (ACC_VERSION)
@@ -227,6 +242,12 @@ func ParseMessage(buf []byte) (*Message, error) {
 		err := parseHostnameUpdateMessage(r, msg)
 		if err != nil {
 			return nil, fmt.Errorf("parse hostname update: %w", err)
+		}
+
+	case ACC_CVARCHANGE:
+		err := parseCvarChangeMessage(r, msg)
+		if err != nil {
+			return nil, fmt.Errorf("parse cvar change: %w", err)
 		}
 
 	default:
@@ -686,6 +707,37 @@ func parseHostnameUpdateMessage(r *Reader, msg *Message) error {
 
 	msg.HostnameUpdate = &HostnameUpdateMessage{
 		Hostname: string(hostnameBytes),
+	}
+	return nil
+}
+
+func parseCvarChangeMessage(r *Reader, msg *Message) error {
+	clientID, err := r.ReadUint32()
+	if err != nil {
+		return err
+	}
+
+	challenge, err := r.ReadUint32()
+	if err != nil {
+		return err
+	}
+
+	name, err := r.ReadString()
+	if err != nil {
+		return err
+	}
+
+	value, err := r.ReadString()
+	if err != nil {
+		return err
+	}
+
+	msg.CvarChange = &CvarChangeMessage{
+		ClientID:  clientID,
+		Challenge: challenge,
+		Cvars: []CvarChangeEntry{
+			{Name: name, Value: value},
+		},
 	}
 	return nil
 }

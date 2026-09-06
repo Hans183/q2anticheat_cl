@@ -48,6 +48,8 @@ const (
 	ACC_NAMEUPDATE        ClientByte = 12
 	// Server hostname change notification
 	ACC_HOSTNAMEUPDATE    ClientByte = 13
+	// Real-time client cvar change report
+	ACC_CVARCHANGE        ClientByte = 14
 )
 
 // Cvar comparison operators

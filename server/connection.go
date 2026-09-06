@@ -63,6 +63,10 @@ type ClientInfo struct {
 	ClientType   byte
 	BadFiles     []string
 	Token        string
+
+	// Real-time cvar tamper tracking
+	CvarTamperCount    int
+	CvarTamperLastViol time.Time
 }
 
 // NewGameServer creates a new GameServer from an accepted connection

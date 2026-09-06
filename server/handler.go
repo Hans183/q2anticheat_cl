@@ -85,6 +85,9 @@ func (h *Handler) HandleMessage(gs *GameServer, buf []byte) {
 	case protocol.ACC_HOSTNAMEUPDATE:
 		h.handleHostnameUpdate(gs, msg.HostnameUpdate)
 
+	case protocol.ACC_CVARCHANGE:
+		h.handleCvarChange(gs, msg.CvarChange)
+
 	default:
 		log.Printf("[HANDLER] Unknown message type %d from %s", msg.Type, gs.RemoteAddr)
 	}
@@ -317,7 +320,6 @@ func (h *Handler) handleClientData(gs *GameServer, cd *protocol.ClientDataMessag
 				log.Printf("[HANDLER] Cvar violation: %s=%s from client %d (expected default %s, op %d)",
 					cvarData.Name, cvarData.Value, cd.ClientID, expected.Default, expected.Op)
 			}
-			break
 		}
 	}
 
@@ -495,18 +497,90 @@ func (h *Handler) handleHostnameUpdate(gs *GameServer, hu *protocol.HostnameUpda
 		oldHostname, hu.Hostname, gs.RemoteAddr)
 }
 
+// Number of cvar tamper violations before a client gets kicked
+const cvarTamperKickLimit = 3
+
+// Length of the window in which violations are counted before kicking
+const cvarTamperWindow = 60 * time.Second
+
+// handleCvarChange handles ACC_CVARCHANGE (real-time cvar value changes).
+// The game server has already reverted violating values server-side; here we
+// count repeated tampering and kick the client after several violations.
+func (h *Handler) handleCvarChange(gs *GameServer, cc *protocol.CvarChangeMessage) {
+	if cc == nil {
+		return
+	}
+
+	client := gs.GetClient(cc.ClientID)
+	if client == nil {
+		log.Printf("[HANDLER] Cvar change for unknown client %d from %s",
+			cc.ClientID, gs.RemoteAddr)
+		return
+	}
+
+	for _, entry := range cc.Cvars {
+		check := gs.FindCvarCheck(entry.Name)
+		if check == nil {
+			// cvar not on the watchlist, ignore
+			continue
+		}
+
+		if compareCvar(entry.Value, *check) {
+			// value passes the check, nothing to do
+			continue
+		}
+
+		// tampering detected
+		now := time.Now()
+		if client.CvarTamperLastViol.IsZero() || now.Sub(client.CvarTamperLastViol) > cvarTamperWindow {
+			client.CvarTamperCount = 0
+		}
+		client.CvarTamperLastViol = now
+		client.CvarTamperCount++
+
+		playerIP := ""
+		playerName := client.Name
+		if client.IP != nil {
+			playerIP = client.IP.String()
+		}
+
+		log.Printf("[HANDLER] Cvar tamper: %s=%s from client %d (violation %d/%d in window) from %s",
+			entry.Name, entry.Value, cc.ClientID, client.CvarTamperCount, cvarTamperKickLimit, gs.RemoteAddr)
+
+		if h.OnViolation != nil {
+			h.OnViolation(gs.RemoteAddr.String(), playerIP, playerName, cc.ClientID,
+				"cvartamper", fmt.Sprintf("cvar %s=%s (tamper)", entry.Name, entry.Value))
+		}
+
+		if client.CvarTamperCount >= cvarTamperKickLimit {
+			reason := fmt.Sprintf("repeated cvar tampering: %s=%s (%d violations)", entry.Name, entry.Value, client.CvarTamperCount)
+			clientMsg := "Anticheat: repeated cvar tampering detected"
+			log.Printf("[HANDLER] Kicking client %d from %s: %s", cc.ClientID, gs.RemoteAddr, reason)
+			gs.SendViolation(cc.ClientID, cc.Challenge, reason, clientMsg)
+			client.CvarTamperCount = 0
+		}
+	}
+}
+
 // compareCvar checks a client's cvar value against expected check rules.
 // Returns TRUE if value PASSES (no violation), FALSE if value FAILS (violation).
+//
+// The operator describes the violation condition (r1ch convention):
+//   - >= <= < > : numeric comparison, violation when value is out of range
+//   - =  eq  ~  : denylist, violation when value equals/equals-ci/contains
+//   - != ne     : must match one of the listed values, violation otherwise
 func compareCvar(value string, check protocol.CvarCheck) bool {
 	switch check.Op {
 	case protocol.OP_EQUAL:
+		// violation when value equals any listed value
 		for _, v := range check.Values {
 			if value == v {
-				return true
+				return false
 			}
 		}
-		return false
+		return true
 	case protocol.OP_NEQUAL:
+		// violation when value matches none of the listed values
 		for _, v := range check.Values {
 			if value == v {
 				return true
@@ -514,13 +588,15 @@ func compareCvar(value string, check protocol.CvarCheck) bool {
 		}
 		return false
 	case protocol.OP_STREQUAL:
+		// violation when value equals (case-insensitive) any listed value
 		for _, v := range check.Values {
 			if strings.EqualFold(value, v) {
-				return true
+				return false
 			}
 		}
-		return false
+		return true
 	case protocol.OP_STRNEQUAL:
+		// violation when value matches none of the listed values (case-insensitive)
 		for _, v := range check.Values {
 			if strings.EqualFold(value, v) {
 				return true
@@ -528,12 +604,13 @@ func compareCvar(value string, check protocol.CvarCheck) bool {
 		}
 		return false
 	case protocol.OP_STRSTR:
+		// violation when value contains any listed substring
 		for _, v := range check.Values {
 			if len(value) >= len(v) && strings.Contains(value, v) {
-				return true
+				return false
 			}
 		}
-		return false
+		return true
 	default:
 		if len(check.Values) == 0 {
 			return true
