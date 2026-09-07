@@ -154,6 +154,16 @@ func New(dbPath string) (*DB, error) {
 	return db, nil
 }
 
+// PushSubscriptionRecord represents a registered Web Push subscription
+type PushSubscriptionRecord struct {
+	ID        int64
+	Endpoint  string
+	P256dh    string
+	Auth      string
+	UserAgent string
+	CreatedAt time.Time
+}
+
 // migrate creates the database schema
 func (db *DB) migrate() error {
 	schema := `
@@ -237,6 +247,20 @@ func (db *DB) migrate() error {
 		added_by   TEXT NOT NULL DEFAULT 'admin',
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		UNIQUE(type, pattern)
+	);
+
+	CREATE TABLE IF NOT EXISTS push_subscriptions (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		endpoint   TEXT UNIQUE NOT NULL,
+		p256dh     TEXT NOT NULL,
+		auth       TEXT NOT NULL,
+		user_agent TEXT,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS system_config (
+		key   TEXT PRIMARY KEY,
+		value TEXT NOT NULL
 	);
 	`
 
@@ -1176,3 +1200,61 @@ func scanViolations(rows *sql.Rows) ([]*ViolationRecord, error) {
 	}
 	return records, rows.Err()
 }
+
+// GetConfigValue retrieves a system configuration value by key
+func (db *DB) GetConfigValue(key string) (string, error) {
+	var val string
+	err := db.conn.QueryRow("SELECT value FROM system_config WHERE key = ?", key).Scan(&val)
+	if err != nil {
+		return "", err
+	}
+	return val, nil
+}
+
+// SetConfigValue sets or updates a system configuration value by key
+func (db *DB) SetConfigValue(key, value string) error {
+	_, err := db.conn.Exec("INSERT INTO system_config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", key, value)
+	return err
+}
+
+// InsertPushSubscription stores or updates a push subscription endpoint
+func (db *DB) InsertPushSubscription(endpoint, p256dh, auth, userAgent string) error {
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		return fmt.Errorf("endpoint cannot be empty")
+	}
+	_, err := db.conn.Exec(`
+		INSERT INTO push_subscriptions (endpoint, p256dh, auth, user_agent, created_at)
+		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth, user_agent = excluded.user_agent, created_at = CURRENT_TIMESTAMP`,
+		endpoint, p256dh, auth, userAgent)
+	return err
+}
+
+// DeletePushSubscription deletes a push subscription by endpoint
+func (db *DB) DeletePushSubscription(endpoint string) error {
+	_, err := db.conn.Exec("DELETE FROM push_subscriptions WHERE endpoint = ?", strings.TrimSpace(endpoint))
+	return err
+}
+
+// GetPushSubscriptions retrieves all registered active push subscriptions
+func (db *DB) GetPushSubscriptions() ([]PushSubscriptionRecord, error) {
+	rows, err := db.conn.Query("SELECT id, endpoint, p256dh, auth, COALESCE(user_agent, ''), created_at FROM push_subscriptions")
+	if err != nil {
+		return nil, fmt.Errorf("query push_subscriptions: %w", err)
+	}
+	defer rows.Close()
+
+	var list []PushSubscriptionRecord
+	for rows.Next() {
+		var sub PushSubscriptionRecord
+		var ts string
+		if err := rows.Scan(&sub.ID, &sub.Endpoint, &sub.P256dh, &sub.Auth, &sub.UserAgent, &ts); err != nil {
+			return nil, err
+		}
+		sub.CreatedAt = parseTimestamp(ts)
+		list = append(list, sub)
+	}
+	return list, rows.Err()
+}
+

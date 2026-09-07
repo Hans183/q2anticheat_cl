@@ -257,3 +257,140 @@ function formatBytes(b) {
   if (b >= 1024) return (b / 1024).toFixed(1) + ' KB';
   return b + ' B';
 }
+
+// Web Push Notification Support
+function urlBase64ToUint8Array(base64String) {
+  var padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  var base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  var rawData = window.atob(base64);
+  var outputArray = new Uint8Array(rawData.length);
+  for (var i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
+async function checkPushSubscriptionState() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    updatePushUI('unsupported');
+    return;
+  }
+
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) {
+      updatePushUI('subscribed');
+    } else {
+      updatePushUI('unsubscribed');
+    }
+  } catch (err) {
+    console.warn('[PUSH] Error checking subscription:', err);
+    updatePushUI('unsubscribed');
+  }
+}
+
+async function togglePushSubscription() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    alert('Tu navegador no soporta Notificaciones Push.');
+    return;
+  }
+
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+
+    if (sub) {
+      await sub.unsubscribe();
+      await fetch('/api/push/unsubscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ endpoint: sub.endpoint })
+      });
+      updatePushUI('unsubscribed');
+      showNetworkStatus('Notificaciones Push desactivadas', 'warning');
+    } else {
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') {
+        alert('Se requieren permisos de notificación para habilitar las alertas Push.');
+        return;
+      }
+
+      const keyResp = await fetch('/api/push/vapid-key');
+      const keyData = await keyResp.json();
+      if (!keyData.publicKey) {
+        throw new Error('No se pudo obtener la clave pública VAPID.');
+      }
+
+      const applicationServerKey = urlBase64ToUint8Array(keyData.publicKey);
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: applicationServerKey
+      });
+
+      const subJson = sub.toJSON();
+      await fetch('/api/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          endpoint: subJson.endpoint,
+          keys: subJson.keys
+        })
+      });
+
+      updatePushUI('subscribed');
+      showNetworkStatus('🔔 Notificaciones Push activadas correctamente', 'success');
+    }
+  } catch (err) {
+    console.error('[PUSH] Error al cambiar suscripción:', err);
+    alert('Error al gestionar las notificaciones Push: ' + err.message);
+  }
+}
+
+async function sendTestPushNotification() {
+  try {
+    const resp = await fetch('/api/push/test', { method: 'POST' });
+    const data = await resp.json();
+    if (data.ok) {
+      showNetworkStatus('Notificación de prueba enviada', 'success');
+    } else {
+      alert('Error enviando notificación de prueba');
+    }
+  } catch (err) {
+    alert('Error: ' + err.message);
+  }
+}
+
+function updatePushUI(state) {
+  var bellBtns = document.querySelectorAll('.push-toggle-btn');
+  bellBtns.forEach(function(btn) {
+    if (state === 'subscribed') {
+      btn.classList.add('active');
+      btn.title = 'Notificaciones Push activadas (Clic para desactivar)';
+      btn.setAttribute('aria-label', 'Notificaciones activadas');
+    } else if (state === 'unsubscribed') {
+      btn.classList.remove('active');
+      btn.title = 'Activar Notificaciones Push de violaciones';
+      btn.setAttribute('aria-label', 'Activar notificaciones');
+    } else if (state === 'unsupported') {
+      btn.disabled = true;
+      btn.title = 'Notificaciones Push no soportadas en este navegador';
+    }
+  });
+
+  var pushStatusText = document.getElementById('push-status-text');
+  if (pushStatusText) {
+    if (state === 'subscribed') {
+      pushStatusText.innerHTML = '<span style="color:#10b981;font-weight:bold;">🟢 Activadas</span>';
+    } else if (state === 'unsubscribed') {
+      pushStatusText.innerHTML = '<span style="color:#ef4444;font-weight:bold;">🔴 Desactivadas</span>';
+    } else {
+      pushStatusText.innerHTML = '<span style="color:#6b7280;">⚠️ No soportadas</span>';
+    }
+  }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  checkPushSubscriptionState();
+});
+

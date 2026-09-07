@@ -25,10 +25,16 @@ type WebServer struct {
 	auth       *Auth
 	templates  *Templates
 	mux        *http.ServeMux
+	pushMgr    *PushManager
 }
 
 // New creates a new web server
 func New(listenAddr string, db *database.DB, handler *server.Handler) *WebServer {
+	pushMgr, err := NewPushManager(db)
+	if err != nil {
+		log.Printf("[WEB] Warning initializing push manager: %v", err)
+	}
+
 	ws := &WebServer{
 		listenAddr: listenAddr,
 		db:         db,
@@ -36,6 +42,7 @@ func New(listenAddr string, db *database.DB, handler *server.Handler) *WebServer
 		auth:       NewAuth(db),
 		templates:  NewTemplates(),
 		mux:        http.NewServeMux(),
+		pushMgr:    pushMgr,
 	}
 	ws.routes()
 	return ws
@@ -84,6 +91,10 @@ func (ws *WebServer) routes() {
 	ws.mux.Handle("/change-password", ws.authMiddleware(http.HandlerFunc(ws.handleChangePassword)))
 	ws.mux.Handle("/maintenance/purge-screenshots", ws.authMiddleware(http.HandlerFunc(ws.handlePurgeScreenshots)))
 	ws.mux.Handle("/api/stats", ws.authMiddleware(http.HandlerFunc(ws.handleAPIStats)))
+	ws.mux.Handle("/api/push/vapid-key", ws.authMiddleware(http.HandlerFunc(ws.handleAPIPushVapidKey)))
+	ws.mux.Handle("/api/push/subscribe", ws.authMiddleware(http.HandlerFunc(ws.handleAPIPushSubscribe)))
+	ws.mux.Handle("/api/push/unsubscribe", ws.authMiddleware(http.HandlerFunc(ws.handleAPIPushUnsubscribe)))
+	ws.mux.Handle("/api/push/test", ws.authMiddleware(http.HandlerFunc(ws.handleAPIPushTest)))
 }
 
 // Start begins listening
@@ -754,3 +765,129 @@ func (ws *WebServer) handleAPIScreenshotReview(w http.ResponseWriter, r *http.Re
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"ok":true}`)
 }
+
+// SendViolationPush triggers a Web Push notification for a player violation
+func (ws *WebServer) SendViolationPush(serverAddr, playerIP, playerName, vType, reason string) {
+	if ws.pushMgr == nil {
+		return
+	}
+
+	title := "⚠️ Violación Anticheat"
+	if playerName != "" {
+		title = fmt.Sprintf("⚠️ Violación: %s", playerName)
+	}
+
+	body := fmt.Sprintf("Tipo: %s | Razón: %s | IP: %s", vType, reason, playerIP)
+	if serverAddr != "" {
+		body += fmt.Sprintf(" (%s)", serverAddr)
+	}
+
+	url := "/violations"
+	if playerName != "" {
+		url = fmt.Sprintf("/violations?name=%s", playerName)
+	}
+
+	ws.pushMgr.SendToAll(PushNotificationPayload{
+		Title: title,
+		Body:  body,
+		Icon:  "/static/icon.svg",
+		URL:   url,
+		Tag:   "violation-" + vType,
+	})
+}
+
+func (ws *WebServer) handleAPIPushVapidKey(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if ws.pushMgr == nil {
+		http.Error(w, `{"error":"push manager not initialized"}`, http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]string{
+		"publicKey": ws.pushMgr.PublicKey(),
+	})
+}
+
+func (ws *WebServer) handleAPIPushSubscribe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Endpoint string `json:"endpoint"`
+		Keys     struct {
+			P256dh string `json:"p256dh"`
+			Auth   string `json:"auth"`
+		} `json:"keys"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		return
+	}
+
+	if req.Endpoint == "" || req.Keys.P256dh == "" || req.Keys.Auth == "" {
+		http.Error(w, `{"error":"missing endpoint or keys"}`, http.StatusBadRequest)
+		return
+	}
+
+	userAgent := r.UserAgent()
+	if err := ws.db.InsertPushSubscription(req.Endpoint, req.Keys.P256dh, req.Keys.Auth, userAgent); err != nil {
+		log.Printf("[WEB] Error inserting push subscription: %v", err)
+		http.Error(w, `{"error":"db error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("[WEB] New Web Push subscription registered (%s)", userAgent)
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"ok":true}`)
+}
+
+func (ws *WebServer) handleAPIPushUnsubscribe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Endpoint string `json:"endpoint"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := ws.db.DeletePushSubscription(req.Endpoint); err != nil {
+		log.Printf("[WEB] Error deleting push subscription: %v", err)
+		http.Error(w, `{"error":"db error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"ok":true}`)
+}
+
+func (ws *WebServer) handleAPIPushTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if ws.pushMgr == nil {
+		http.Error(w, `{"error":"push manager not initialized"}`, http.StatusInternalServerError)
+		return
+	}
+
+	ws.pushMgr.SendToAll(PushNotificationPayload{
+		Title: "🔔 Notificación de Prueba",
+		Body:  "Las notificaciones Push de Anticheat Q2PRO están funcionando correctamente.",
+		Icon:  "/static/icon.svg",
+		URL:   "/violations",
+		Tag:   "test-notification",
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"ok":true}`)
+}
+

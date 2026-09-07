@@ -103,3 +103,60 @@ self.addEventListener('fetch', (event) => {
     })
   );
 });
+
+// 4. Web Push Notification Event Listener
+self.addEventListener('push', (event) => {
+  let data = {
+    title: '⚠️ Violación Anticheat',
+    body: 'Se ha detectado una nueva infracción en un servidor.',
+    icon: '/static/icon.svg',
+    url: '/violations'
+  };
+
+  if (event.data) {
+    try {
+      data = Object.assign(data, event.data.json());
+    } catch (e) {
+      data.body = event.data.text();
+    }
+  }
+
+  const options = {
+    body: data.body,
+    icon: data.icon || '/static/icon.svg',
+    badge: '/static/icon.svg',
+    vibrate: [200, 100, 200],
+    data: {
+      url: data.url || '/violations'
+    },
+    tag: data.tag || 'anticheat-violation',
+    renotify: true
+  };
+
+  event.waitUntil(
+    self.registration.showNotification(data.title, options)
+  );
+});
+
+// 5. Notification Click Event Listener: Focus or Open Dashboard Page
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const targetUrl = (event.notification.data && event.notification.data.url) ? event.notification.data.url : '/violations';
+
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if (client.url && 'focus' in client) {
+          if (client.navigate) {
+            client.navigate(targetUrl);
+          }
+          return client.focus();
+        }
+      }
+      if (clients.openWindow) {
+        return clients.openWindow(targetUrl);
+      }
+    })
+  );
+});
+

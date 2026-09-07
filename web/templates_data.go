@@ -48,10 +48,15 @@ var templates = map[string]string{
 <div class="main-content">
 <div class="topbar">
   <h2>Dashboard</h2>
-  <form method="GET" action="/player" class="quick-search-form" style="display:flex;gap:8px;">
-    <input type="text" name="q" placeholder="Buscar jugador por nombre o IP..." class="form-control" style="width:280px;padding:6px 12px;border-radius:6px;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:13px;">
-    <button type="submit" class="btn btn-primary btn-sm">&#128269; Buscar</button>
-  </form>
+  <div style="display:flex;align-items:center;gap:12px;">
+    <button type="button" class="push-toggle-btn" onclick="togglePushSubscription()" title="Activar/Desactivar Notificaciones Push">
+      <span>🔔</span> Notificaciones
+    </button>
+    <form method="GET" action="/player" class="quick-search-form" style="display:flex;gap:8px;">
+      <input type="text" name="q" placeholder="Buscar jugador por nombre o IP..." class="form-control" style="width:240px;padding:6px 12px;border-radius:6px;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:13px;">
+      <button type="submit" class="btn btn-primary btn-sm">&#128269; Buscar</button>
+    </form>
+  </div>
 </div>
 <div class="content">
 
@@ -494,7 +499,12 @@ var templates = map[string]string{
 <div class="main-content">
 <div class="topbar">
   <h2>Violations</h2>
-  <a href="/violations/export.csv?name={{.PlayerName}}&player={{.PlayerIP}}&server={{.ServerAddr}}&type={{.Type}}&from={{.DateFrom}}&to={{.DateTo}}" class="btn btn-sm btn-outline" title="Descargar historial de violaciones en formato CSV">&#128190; Exportar CSV</a>
+  <div style="display:flex;align-items:center;gap:12px;">
+    <button type="button" class="push-toggle-btn" onclick="togglePushSubscription()" title="Activar/Desactivar Notificaciones Push">
+      <span>🔔</span> Notificaciones
+    </button>
+    <a href="/violations/export.csv?name={{.PlayerName}}&player={{.PlayerIP}}&server={{.ServerAddr}}&type={{.Type}}&from={{.DateFrom}}&to={{.DateTo}}" class="btn btn-sm btn-outline" title="Descargar historial de violaciones en formato CSV">&#128190; Exportar CSV</a>
+  </div>
 </div>
 <div class="content">
 
@@ -1070,6 +1080,27 @@ function filterBlacklistTable() {
         </div>
         <button type="submit" class="btn btn-danger">&#128465; Purgar Archivos Antiguos</button>
       </form>
+    </div>
+  </div>
+</div>
+
+<div class="card" style="margin-top:24px;">
+  <div class="card-header"><h3>🔔 Notificaciones Push en Vivo (Navegador y PWA)</h3></div>
+  <div class="card-body">
+    <p style="font-size:13px; color:var(--text-secondary); margin-bottom:14px;">
+      Recibe alertas instantáneas en tu celular o escritorio cada vez que se detecte una violación de un jugador en tiempo real.
+    </p>
+    <div class="info-row" style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border);">
+      <span>Estado de suscripción en este dispositivo:</span>
+      <span id="push-status-text">Comprobando...</span>
+    </div>
+    <div style="display:flex; gap:12px; margin-top:16px; flex-wrap:wrap;">
+      <button type="button" class="push-toggle-btn" onclick="togglePushSubscription()" style="padding:8px 16px; font-size:14px;">
+        🔔 Activar / Desactivar Notificaciones Push
+      </button>
+      <button type="button" class="btn btn-outline" onclick="sendTestPushNotification()" style="padding:8px 16px; font-size:14px;">
+        🧪 Enviar Notificación de Prueba
+      </button>
     </div>
   </div>
 </div>

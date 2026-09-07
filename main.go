@@ -125,7 +125,10 @@ func main() {
 	// Initialize blacklist with database
 	tcpServer.GetHandler().Blacklist().SetDB(db)
 
-	// Wire up violation callback to log to database
+	// Initialize web dashboard
+	ws := web.New(config.WebAddr, db, tcpServer.GetHandler())
+
+	// Wire up violation callback to log to database and send push notification
 	tcpServer.GetHandler().OnViolation = func(serverAddr, playerIP, playerName string, clientID uint32, vType, reason string) {
 		db.InsertViolation(&database.ViolationRecord{
 			ServerAddr: serverAddr,
@@ -136,15 +139,16 @@ func main() {
 			Reason:     reason,
 			Timestamp:  time.Now(),
 		})
+
+		ws.SendViolationPush(serverAddr, playerIP, playerName, vType, reason)
 	}
 
 	if err := tcpServer.Start(); err != nil {
 		log.Fatalf("Failed to start TCP server: %v", err)
 	}
 
-	// Start web dashboard
+	// Start web dashboard listener
 	go func() {
-		ws := web.New(config.WebAddr, db, tcpServer.GetHandler())
 		if err := ws.Start(); err != nil {
 			log.Printf("[WEB] Dashboard error: %v", err)
 		}
