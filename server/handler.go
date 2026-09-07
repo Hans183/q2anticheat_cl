@@ -376,18 +376,102 @@ func (h *Handler) handleClientData(gs *GameServer, cd *protocol.ClientDataMessag
 	}
 }
 
+// Number of truncated process snapshots before kick
+const processTruncKickLimit = 3
+
+// Length of the window in which truncated violations are counted before kicking
+const processTruncWindow = 120 * time.Second
+
 func (h *Handler) handleProcessData(gs *GameServer, pd *protocol.ProcessDataMessage) {
 	if pd == nil {
 		return
 	}
 
-	log.Printf("[HANDLER] Process data from %s: client=%d, %d processes, %d modules",
-		gs.RemoteAddr, pd.ClientID, len(pd.Processes), len(pd.Modules))
-
-	// Look up client info
 	client := gs.GetClient(pd.ClientID)
+	if client == nil {
+		log.Printf("[HANDLER] Process data for unknown client %d from %s", pd.ClientID, gs.RemoteAddr)
+		return
+	}
+
+	// Accumulate this batch
+	client.PendingProcesses = append(client.PendingProcesses, pd.Processes...)
+	client.PendingModules = append(client.PendingModules, pd.Modules...)
+	if pd.Flags&protocol.ACPD_TRUNCATED != 0 {
+		client.PendingTruncated = true
+	}
+
+	log.Printf("[HANDLER] Process batch from %s: client=%d, +%d procs +%d mods (flags=0x%02x)",
+		gs.RemoteAddr, pd.ClientID, len(pd.Processes), len(pd.Modules), pd.Flags)
+
+	// Wait for final batch
+	if pd.Flags&protocol.ACPD_FINAL == 0 {
+		return
+	}
+
+	// Final batch received — assemble complete snapshot
+	snapshot := &protocol.ProcessDataMessage{
+		ClientID:   pd.ClientID,
+		Challenge:  pd.Challenge,
+		PlayerName: pd.PlayerName,
+		Flags:      pd.Flags,
+		Processes:  client.PendingProcesses,
+		Modules:    client.PendingModules,
+	}
+
+	// Handle truncation counting before processing the snapshot
+	if client.PendingTruncated {
+		h.handleProcessTruncation(gs, client, snapshot)
+	}
+
+	// Process the complete snapshot (blacklist check + DB + violations)
+	h.handleCompleteProcessSnapshot(gs, client, snapshot)
+
+	// Clear pending state
+	client.PendingProcesses = nil
+	client.PendingModules = nil
+	client.PendingTruncated = false
+}
+
+// handleProcessTruncation counts truncated process snapshots per client and
+// kicks after processTruncKickLimit consecutive truncations within processTruncWindow.
+func (h *Handler) handleProcessTruncation(gs *GameServer, client *ClientInfo, snapshot *protocol.ProcessDataMessage) {
+	now := time.Now()
+	if client.ProcessTruncLastViol.IsZero() || now.Sub(client.ProcessTruncLastViol) > processTruncWindow {
+		client.ProcessTruncCount = 0
+	}
+	client.ProcessTruncLastViol = now
+	client.ProcessTruncCount++
+
 	playerIP := ""
-	playerName := pd.PlayerName
+	playerName := client.Name
+	if client.IP != nil {
+		playerIP = client.IP.String()
+	}
+
+	log.Printf("[HANDLER] Process snapshot truncated from %s: client=%d (%d/%d violations in window)",
+		gs.RemoteAddr, snapshot.ClientID, client.ProcessTruncCount, processTruncKickLimit)
+
+	if h.OnViolation != nil {
+		h.OnViolation(gs.RemoteAddr.String(), playerIP, playerName, snapshot.ClientID,
+			"processtrunc", fmt.Sprintf("process snapshot truncated (%d/%d in window)",
+				client.ProcessTruncCount, processTruncKickLimit))
+	}
+
+	if client.ProcessTruncCount >= processTruncKickLimit {
+		reason := fmt.Sprintf("repeated truncated process snapshot (%d violations)", client.ProcessTruncCount)
+		clientMsg := "Anticheat: repeated incomplete process snapshot"
+		log.Printf("[HANDLER] Kicking client %d from %s: %s", snapshot.ClientID, gs.RemoteAddr, reason)
+		gs.SendViolation(snapshot.ClientID, snapshot.Challenge, reason, clientMsg)
+		client.ProcessTruncCount = 0
+	}
+}
+
+// handleCompleteProcessSnapshot runs the blacklist check, stores the snapshot
+// in the database, and reports any violations. Called once per fully assembled
+// process snapshot (after all batches have been received).
+func (h *Handler) handleCompleteProcessSnapshot(gs *GameServer, client *ClientInfo, snapshot *protocol.ProcessDataMessage) {
+	playerName := snapshot.PlayerName
+	playerIP := ""
 	if client != nil {
 		if client.IP != nil {
 			playerIP = client.IP.String()
@@ -397,14 +481,18 @@ func (h *Handler) handleProcessData(gs *GameServer, pd *protocol.ProcessDataMess
 		}
 	}
 
+	log.Printf("[HANDLER] Process snapshot complete from %s: client=%d, %d procs, %d mods (truncated=%v)",
+		gs.RemoteAddr, snapshot.ClientID, len(snapshot.Processes), len(snapshot.Modules),
+		snapshot.Flags&protocol.ACPD_TRUNCATED != 0)
+
 	// Check processes and modules against blacklist
 	var violations []string
-	for _, proc := range pd.Processes {
+	for _, proc := range snapshot.Processes {
 		if matched, pattern := h.blacklist.CheckProcess(proc.Name); matched {
 			violations = append(violations, fmt.Sprintf("proceso sospechoso: %s (pid=%d, patron: %s)", proc.Name, proc.PID, pattern))
 		}
 	}
-	for _, mod := range pd.Modules {
+	for _, mod := range snapshot.Modules {
 		modSHA1Hex := hex.EncodeToString(mod.SHA1[:])
 		if matched, pattern, matchIn := h.blacklist.CheckModuleFull(mod.Name, mod.Path, modSHA1Hex); matched {
 			violations = append(violations, fmt.Sprintf("modulo sospechoso: %s (%s: %s)", mod.Name, matchIn, pattern))
@@ -413,18 +501,26 @@ func (h *Handler) handleProcessData(gs *GameServer, pd *protocol.ProcessDataMess
 
 	violationStr := strings.Join(violations, "; ")
 
+	// Add truncation marker to violation string if snapshot was truncated
+	if snapshot.Flags&protocol.ACPD_TRUNCATED != 0 {
+		if violationStr != "" {
+			violationStr += "; "
+		}
+		violationStr += "[snapshot incompleto]"
+	}
+
 	// Serialize processes and modules to JSON
 	processesJSON := "[]"
 	modulesJSON := "[]"
 
-	if len(pd.Processes) > 0 {
+	if len(snapshot.Processes) > 0 {
 		type jsonProcess struct {
-			PID      uint32 `json:"pid"`
+			PID       uint32 `json:"pid"`
 			ParentPID uint32 `json:"parent_pid"`
-			Name     string `json:"name"`
+			Name      string `json:"name"`
 		}
-		procs := make([]jsonProcess, len(pd.Processes))
-		for i, p := range pd.Processes {
+		procs := make([]jsonProcess, len(snapshot.Processes))
+		for i, p := range snapshot.Processes {
 			procs[i] = jsonProcess{PID: p.PID, ParentPID: p.ParentPID, Name: p.Name}
 		}
 		if data, err := json.Marshal(procs); err == nil {
@@ -432,14 +528,14 @@ func (h *Handler) handleProcessData(gs *GameServer, pd *protocol.ProcessDataMess
 		}
 	}
 
-	if len(pd.Modules) > 0 {
+	if len(snapshot.Modules) > 0 {
 		type jsonModule struct {
 			Name string `json:"name"`
 			Path string `json:"path"`
 			SHA1 string `json:"sha1"`
 		}
-		mods := make([]jsonModule, len(pd.Modules))
-		for i, m := range pd.Modules {
+		mods := make([]jsonModule, len(snapshot.Modules))
+		for i, m := range snapshot.Modules {
 			mods[i] = jsonModule{Name: m.Name, Path: m.Path, SHA1: fmt.Sprintf("%x", m.SHA1)}
 		}
 		if data, err := json.Marshal(mods); err == nil {
@@ -451,7 +547,7 @@ func (h *Handler) handleProcessData(gs *GameServer, pd *protocol.ProcessDataMess
 	if h.storage != nil && h.storage.DB() != nil {
 		_, err := h.storage.DB().InsertProcessSnapshot(
 			gs.Hostname, playerIP, playerName,
-			int(pd.ClientID), len(pd.Processes), len(pd.Modules),
+			int(snapshot.ClientID), len(snapshot.Processes), len(snapshot.Modules),
 			violationStr, processesJSON, modulesJSON)
 		if err != nil {
 			log.Printf("[HANDLER] Error storing process snapshot: %v", err)
@@ -461,10 +557,10 @@ func (h *Handler) handleProcessData(gs *GameServer, pd *protocol.ProcessDataMess
 	// Log violations
 	if len(violations) > 0 {
 		log.Printf("[HANDLER] Process violations from %s (client %d): %s",
-			gs.RemoteAddr, pd.ClientID, violationStr)
+			gs.RemoteAddr, snapshot.ClientID, violationStr)
 		if h.OnViolation != nil {
 			for _, v := range violations {
-				h.OnViolation(gs.RemoteAddr.String(), playerIP, playerName, pd.ClientID, "process", v)
+				h.OnViolation(gs.RemoteAddr.String(), playerIP, playerName, snapshot.ClientID, "process", v)
 			}
 		}
 	}

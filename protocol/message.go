@@ -59,13 +59,21 @@ type ModuleEntry struct {
 	SHA1   [20]byte
 }
 
-// ProcessDataMessage contains a process snapshot from a client (ACC_PROCESSDATA)
+// Process data batch flags (wire format, matches client AC_PD_*)
+const (
+	ACPD_TRUNCATED byte = 0x01 // snapshot incomplete (more processes/modules than stored)
+	ACPD_FINAL     byte = 0x02 // last batch of this snapshot
+)
+
+// ProcessDataMessage contains a process snapshot batch from a client (ACC_PROCESSDATA).
+// Multiple batches may be sent per logical snapshot; accumulate until ACPD_FINAL.
 type ProcessDataMessage struct {
-	ClientID    uint32
-	Challenge   uint32
-	PlayerName  string
-	Processes   []ProcessEntry
-	Modules     []ModuleEntry
+	ClientID   uint32
+	Challenge  uint32
+	PlayerName string
+	Flags      byte
+	Processes  []ProcessEntry
+	Modules    []ModuleEntry
 }
 
 // NameUpdateMessage contains a player name change (ACC_NAMEUPDATE)
@@ -609,9 +617,18 @@ func parseProcessDataMessage(r *Reader, msg *Message) error {
 		return err
 	}
 
+	flags, err := r.ReadByte()
+	if err != nil {
+		return fmt.Errorf("read flags: %w", err)
+	}
+
 	numProcesses, err := r.ReadUint32()
 	if err != nil {
 		return err
+	}
+
+	if numProcesses > 1024 {
+		return fmt.Errorf("process count %d exceeds max 1024", numProcesses)
 	}
 
 	processes := make([]ProcessEntry, numProcesses)
@@ -641,6 +658,10 @@ func parseProcessDataMessage(r *Reader, msg *Message) error {
 	numModules, err := r.ReadUint32()
 	if err != nil {
 		return err
+	}
+
+	if numModules > 1024 {
+		return fmt.Errorf("module count %d exceeds max 1024", numModules)
 	}
 
 	modules := make([]ModuleEntry, numModules)
@@ -674,6 +695,7 @@ func parseProcessDataMessage(r *Reader, msg *Message) error {
 		ClientID:   clientID,
 		Challenge:  challenge,
 		PlayerName: playerName,
+		Flags:      flags,
 		Processes:  processes,
 		Modules:    modules,
 	}

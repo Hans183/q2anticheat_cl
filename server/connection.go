@@ -67,6 +67,15 @@ type ClientInfo struct {
 	// Real-time cvar tamper tracking
 	CvarTamperCount    int
 	CvarTamperLastViol time.Time
+
+	// Process snapshot truncation tracking (kick on 3rd truncated snapshot)
+	ProcessTruncCount    int
+	ProcessTruncLastViol time.Time
+
+	// Batch accumulation: pending process snapshot until ACPD_FINAL
+	PendingProcesses []protocol.ProcessEntry
+	PendingModules   []protocol.ModuleEntry
+	PendingTruncated bool
 }
 
 // NewGameServer creates a new GameServer from an accepted connection
