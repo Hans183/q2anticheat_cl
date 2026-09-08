@@ -182,6 +182,35 @@ body {
   border-color: var(--accent);
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.quick-search-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.quick-search-input {
+  width: 240px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 13px;
+  transition: border-color 0.2s ease;
+}
+
+.quick-search-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
 .push-toggle-btn.active {
   background: rgba(16, 185, 129, 0.15);
   border-color: rgba(16, 185, 129, 0.5);
@@ -699,6 +728,26 @@ code {
 
   .topbar {
     padding-left: 56px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .topbar-actions {
+    width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 8px;
+  }
+
+  .quick-search-form {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .quick-search-input {
+    width: 100%;
+    min-width: 0;
+    flex: 1;
   }
 
   .content {
@@ -812,6 +861,45 @@ code {
 
   .login-container {
     padding: 20px;
+  }
+
+  /* Topbar: stack vertically on small phones */
+  .topbar {
+    padding: 10px 16px 10px 56px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .topbar h2 {
+    font-size: 16px;
+  }
+
+  .topbar-actions {
+    width: 100%;
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+
+  /* Push button: icon only on very small screens */
+  .push-toggle-btn .push-label {
+    display: none;
+  }
+
+  .push-toggle-btn {
+    padding: 6px 10px;
+    flex-shrink: 0;
+  }
+
+  .quick-search-form {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .quick-search-input {
+    width: 100%;
+    min-width: 0;
+    font-size: 14px;
   }
 }
 

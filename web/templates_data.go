@@ -48,12 +48,12 @@ var templates = map[string]string{
 <div class="main-content">
 <div class="topbar">
   <h2>Dashboard</h2>
-  <div style="display:flex;align-items:center;gap:12px;">
+  <div class="topbar-actions">
     <button type="button" class="push-toggle-btn" onclick="togglePushSubscription()" title="Activar/Desactivar Notificaciones Push">
-      <span>🔔</span> Notificaciones
+      <span>🔔</span><span class="push-label"> Notificaciones</span>
     </button>
-    <form method="GET" action="/player" class="quick-search-form" style="display:flex;gap:8px;">
-      <input type="text" name="q" placeholder="Buscar jugador por nombre o IP..." class="form-control" style="width:240px;padding:6px 12px;border-radius:6px;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:13px;">
+    <form method="GET" action="/player" class="quick-search-form">
+      <input type="text" name="q" placeholder="Buscar jugador por nombre o IP..." class="form-control quick-search-input">
       <button type="submit" class="btn btn-primary btn-sm">&#128269; Buscar</button>
     </form>
   </div>
@@ -198,8 +198,8 @@ var templates = map[string]string{
 <div class="main-content">
 <div class="topbar">
   <h2>&#128100; Perfil Unificado de Jugador</h2>
-  <form method="GET" action="/player" class="quick-search-form" style="display:flex;gap:8px;">
-    <input type="text" name="q" value="{{.Query}}" placeholder="Buscar otro jugador o IP..." class="form-control" style="width:260px;padding:6px 12px;border-radius:6px;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:13px;">
+  <form method="GET" action="/player" class="quick-search-form">
+    <input type="text" name="q" value="{{.Query}}" placeholder="Buscar otro jugador o IP..." class="form-control quick-search-input">
     <button type="submit" class="btn btn-primary btn-sm">&#128269; Buscar</button>
   </form>
 </div>
@@ -1127,8 +1127,7 @@ function filterBlacklistTable() {
     <a href="/settings" class="nav-item {{if eq .CurrentPage "settings"}}active{{end}}"><span class="nav-icon">&#9881;</span> Configuración</a>
   </nav>
   <div class="sidebar-footer">
-    <button type="button" onclick="triggerPWAInstall()" class="nav-item" style="width:100%;text-align:left;background:none;border:none;cursor:pointer;color:var(--text-secondary);font-size:13px;padding:8px 20px;display:flex;align-items:center;gap:12px;"><span class="nav-icon">&#128241;</span> Instalar App</button>
-    <button type="button" onclick="forceResetPWA()" class="nav-item" style="width:100%;text-align:left;background:none;border:none;cursor:pointer;color:var(--text-secondary);font-size:13px;padding:8px 20px;display:flex;align-items:center;gap:12px;"><span class="nav-icon">&#128260;</span> Actualizar PWA</button>
+    <button type="button" onclick="triggerPWAInstall()" class="nav-item" style="width:100%;text-align:left;background:none;border:none;cursor:pointer;color:var(--text-secondary);font-size:13px;padding:12px 20px;display:flex;align-items:center;gap:12px;"><span class="nav-icon">&#128241;</span> Instalar App</button>
     <a href="/logout" class="nav-item logout"><span class="nav-icon">&#10140;</span> Salir</a>
   </div>
 </div>
