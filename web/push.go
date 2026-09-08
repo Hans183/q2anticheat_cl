@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -126,11 +127,17 @@ func (pm *PushManager) SendToAll(payload PushNotificationPayload) {
 				log.Printf("[PUSH] Error sending notification to subscription ID %d: %v", subRecord.ID, err)
 				return
 			}
-			defer resp.Body.Close()
+			// Always drain and close the body to release the TCP connection
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
 
 			if resp.StatusCode == http.StatusGone || resp.StatusCode == http.StatusNotFound {
 				log.Printf("[PUSH] Subscription expired or revoked (%d), deleting: %s", resp.StatusCode, subRecord.Endpoint)
 				_ = pm.db.DeletePushSubscription(subRecord.Endpoint)
+			} else if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+				log.Printf("[PUSH] Unexpected status %d for subscription ID %d (%s)", resp.StatusCode, subRecord.ID, subRecord.Endpoint)
+			} else {
+				log.Printf("[PUSH] Notification sent OK (status %d) to subscription ID %d", resp.StatusCode, subRecord.ID)
 			}
 		}(s, sub)
 	}
