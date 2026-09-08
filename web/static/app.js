@@ -1,13 +1,55 @@
-// PWA Service Worker Registration
+// PWA Service Worker Registration & Auto-Update Lifecycle
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', function() {
+  var swRegistration = null;
+  var isRefreshing = false;
+
+  // Auto-reload when new Service Worker takes control
+  navigator.serviceWorker.addEventListener('controllerchange', function() {
+    if (!isRefreshing) {
+      isRefreshing = true;
+      console.log('[PWA] Nuevo Service Worker activo, recargando aplicación...');
+      window.location.reload();
+    }
+  });
+
+  function registerServiceWorker() {
     navigator.serviceWorker.register('/sw.js', { scope: '/' })
       .then(function(reg) {
+        swRegistration = reg;
         console.log('[PWA] Service Worker registrado con éxito:', reg.scope);
+
+        // Check for updates
+        reg.addEventListener('updatefound', function() {
+          var newWorker = reg.installing;
+          if (newWorker) {
+            newWorker.addEventListener('statechange', function() {
+              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                console.log('[PWA] Nueva versión detectada. Enviando SKIP_WAITING...');
+                newWorker.postMessage({ type: 'SKIP_WAITING' });
+              }
+            });
+          }
+        });
+
+        // If worker is already waiting, tell it to take control
+        if (reg.waiting && navigator.serviceWorker.controller) {
+          reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+        }
       })
       .catch(function(err) {
         console.warn('[PWA] Error al registrar Service Worker:', err);
       });
+  }
+
+  window.addEventListener('load', registerServiceWorker);
+
+  // Mobile Lifecycle: Check for Service Worker updates when returning to foreground
+  document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'visible' && swRegistration) {
+      swRegistration.update().catch(function(err) {
+        console.log('[PWA] Check update:', err);
+      });
+    }
   });
 }
 

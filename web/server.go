@@ -54,7 +54,7 @@ func (ws *WebServer) routes() {
 	ws.mux.HandleFunc("/sw.js", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/javascript")
 		w.Header().Set("Service-Worker-Allowed", "/")
-		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate, max-age=0")
 		data, err := staticFiles.ReadFile("static/sw.js")
 		if err != nil {
 			http.NotFound(w, r)

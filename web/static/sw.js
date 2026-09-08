@@ -38,6 +38,13 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+// Handle SKIP_WAITING message from app client
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
 // Fetch: Smart caching strategy
 self.addEventListener('fetch', (event) => {
   const req = event.request;
