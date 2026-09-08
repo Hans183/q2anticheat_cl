@@ -1127,7 +1127,8 @@ function filterBlacklistTable() {
     <a href="/settings" class="nav-item {{if eq .CurrentPage "settings"}}active{{end}}"><span class="nav-icon">&#9881;</span> Configuración</a>
   </nav>
   <div class="sidebar-footer">
-    <button type="button" onclick="triggerPWAInstall()" class="nav-item" style="width:100%;text-align:left;background:none;border:none;cursor:pointer;color:var(--text-secondary);font-size:13px;padding:12px 20px;display:flex;align-items:center;gap:12px;"><span class="nav-icon">&#128241;</span> Instalar App</button>
+    <button type="button" onclick="triggerPWAInstall()" class="nav-item" style="width:100%;text-align:left;background:none;border:none;cursor:pointer;color:var(--text-secondary);font-size:13px;padding:8px 20px;display:flex;align-items:center;gap:12px;"><span class="nav-icon">&#128241;</span> Instalar App</button>
+    <button type="button" onclick="forceResetPWA()" class="nav-item" style="width:100%;text-align:left;background:none;border:none;cursor:pointer;color:var(--text-secondary);font-size:13px;padding:8px 20px;display:flex;align-items:center;gap:12px;"><span class="nav-icon">&#128260;</span> Actualizar PWA</button>
     <a href="/logout" class="nav-item logout"><span class="nav-icon">&#10140;</span> Salir</a>
   </div>
 </div>

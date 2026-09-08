@@ -18,6 +18,9 @@ if ('serviceWorker' in navigator) {
         swRegistration = reg;
         console.log('[PWA] Service Worker registrado con éxito:', reg.scope);
 
+        // Force immediate check for SW update on server
+        reg.update().catch(function() {});
+
         // Check for updates
         reg.addEventListener('updatefound', function() {
           var newWorker = reg.installing;
@@ -42,6 +45,26 @@ if ('serviceWorker' in navigator) {
   }
 
   window.addEventListener('load', registerServiceWorker);
+
+// Global Helper to Force Reset PWA Cache & Service Worker
+async function forceResetPWA() {
+  if (confirm('¿Deseas desinstalar el Service Worker en caché y forzar la actualización de la PWA?')) {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      for (let r of regs) {
+        await r.unregister();
+      }
+    }
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      for (let k of keys) {
+        await caches.delete(k);
+      }
+    }
+    alert('Caché eliminada con éxito. La página se recargará.');
+    window.location.reload(true);
+  }
+}
 
   // Mobile Lifecycle: Check for Service Worker updates when returning to foreground
   document.addEventListener('visibilitychange', function() {

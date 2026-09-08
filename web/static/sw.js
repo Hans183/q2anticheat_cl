@@ -11,14 +11,15 @@ const PRECACHE_ASSETS = [
   '/static/badge-monochrome.png'
 ];
 
-// Install: Cache essential shell assets
+// Install: Cache essential shell assets & skip waiting immediately
 self.addEventListener('install', (event) => {
+  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       return cache.addAll(PRECACHE_ASSETS).catch((err) => {
         console.warn('[SW] Pre-cache partial warning:', err);
       });
-    }).then(() => self.skipWaiting())
+    })
   );
 });
 
