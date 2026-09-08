@@ -1,11 +1,14 @@
 // Service Worker for Q2PRO Anticheat PWA
-const CACHE_NAME = 'q2anticheat-pwa-v1';
+const CACHE_NAME = 'q2anticheat-pwa-v2';
 const PRECACHE_ASSETS = [
   '/',
   '/static/style.css',
   '/static/app.js',
   '/static/manifest.json',
-  '/static/icon.svg'
+  '/static/icon.svg',
+  '/static/icon-192.png',
+  '/static/icon-512.png',
+  '/static/badge-monochrome.png'
 ];
 
 // Install: Cache essential shell assets
@@ -109,7 +112,8 @@ self.addEventListener('push', (event) => {
   let data = {
     title: '⚠️ Violación Anticheat',
     body: 'Se ha detectado una nueva infracción en un servidor.',
-    icon: '/static/icon.svg',
+    icon: '/static/icon-192.png',
+    badge: '/static/badge-monochrome.png',
     url: '/violations'
   };
 
@@ -123,8 +127,8 @@ self.addEventListener('push', (event) => {
 
   const options = {
     body: data.body,
-    icon: data.icon || '/static/icon.svg',
-    badge: '/static/icon.svg',
+    icon: data.icon || '/static/icon-192.png',
+    badge: data.badge || '/static/badge-monochrome.png',
     vibrate: [200, 100, 200],
     data: {
       url: data.url || '/violations'

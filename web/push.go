@@ -79,6 +79,7 @@ type PushNotificationPayload struct {
 	Title string `json:"title"`
 	Body  string `json:"body"`
 	Icon  string `json:"icon,omitempty"`
+	Badge string `json:"badge,omitempty"`
 	URL   string `json:"url,omitempty"`
 	Tag   string `json:"tag,omitempty"`
 }

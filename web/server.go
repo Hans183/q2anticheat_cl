@@ -790,7 +790,8 @@ func (ws *WebServer) SendViolationPush(serverAddr, playerIP, playerName, vType, 
 	ws.pushMgr.SendToAll(PushNotificationPayload{
 		Title: title,
 		Body:  body,
-		Icon:  "/static/icon.svg",
+		Icon:  "/static/icon-192.png",
+		Badge: "/static/badge-monochrome.png",
 		URL:   url,
 		Tag:   "violation-" + vType,
 	})
@@ -882,7 +883,8 @@ func (ws *WebServer) handleAPIPushTest(w http.ResponseWriter, r *http.Request) {
 	ws.pushMgr.SendToAll(PushNotificationPayload{
 		Title: "🔔 Notificación de Prueba",
 		Body:  "Las notificaciones Push de Anticheat Q2PRO están funcionando correctamente.",
-		Icon:  "/static/icon.svg",
+		Icon:  "/static/icon-192.png",
+		Badge: "/static/badge-monochrome.png",
 		URL:   "/violations",
 		Tag:   "test-notification",
 	})
