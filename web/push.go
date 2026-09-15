@@ -116,7 +116,7 @@ func (pm *PushManager) sendToSingle(data []byte, subscriberEmail string, subReco
 
 	if resp != nil {
 		statusCode := resp.StatusCode
-		if statusCode == http.StatusGone || statusCode == http.StatusNotFound || statusCode == http.StatusUnauthorized || statusCode == http.StatusBadRequest {
+		if statusCode == http.StatusGone || statusCode == http.StatusNotFound || statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden || statusCode == http.StatusBadRequest {
 			log.Printf("[PUSH] Subscription invalid/expired (status %d), removing endpoint: %s", statusCode, subRecord.Endpoint)
 			_ = pm.db.DeletePushSubscription(subRecord.Endpoint)
 			return fmt.Errorf("subscription expired or invalid (status %d)", statusCode)

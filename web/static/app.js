@@ -335,6 +335,57 @@ function urlBase64ToUint8Array(base64String) {
   return outputArray;
 }
 
+function arrayBufferToBase64Url(buffer) {
+  if (!buffer) return '';
+  var binary = '';
+  var bytes = new Uint8Array(buffer);
+  for (var i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return window.btoa(binary)
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+async function forceResubscribePush(keyPublicKey) {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (sub) {
+      await sub.unsubscribe();
+    }
+    if (!keyPublicKey) {
+      const keyResp = await fetch('/api/push/vapid-key');
+      const keyData = await keyResp.json();
+      keyPublicKey = keyData.publicKey;
+    }
+    if (!keyPublicKey) return null;
+
+    const applicationServerKey = urlBase64ToUint8Array(keyPublicKey);
+    sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: applicationServerKey
+    });
+
+    const subJson = sub.toJSON();
+    await fetch('/api/push/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        endpoint: subJson.endpoint,
+        keys: subJson.keys
+      })
+    });
+    updatePushUI('subscribed');
+    console.log('[PUSH] Suscripción renovada con éxito con la clave VAPID actual.');
+    return sub;
+  } catch (err) {
+    console.error('[PUSH] Error al auto-renovar suscripción:', err);
+    return null;
+  }
+}
+
 async function checkPushSubscriptionState() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
     updatePushUI('unsupported');
@@ -345,6 +396,21 @@ async function checkPushSubscriptionState() {
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.getSubscription();
     if (sub) {
+      // Fetch server VAPID key to ensure match
+      const keyResp = await fetch('/api/push/vapid-key');
+      const keyData = await keyResp.json();
+      const serverKey = keyData ? keyData.publicKey : null;
+
+      const subKey = sub.options ? sub.options.applicationServerKey : null;
+      const subKeyBase64 = subKey ? arrayBufferToBase64Url(subKey) : '';
+      const serverKeyClean = serverKey ? serverKey.replace(/=+$/, '') : '';
+
+      if (subKeyBase64 && serverKeyClean && subKeyBase64 !== serverKeyClean) {
+        console.warn('[PUSH] Clave VAPID del navegador no coincide con el servidor. Re-suscribiendo automáticamente...');
+        await forceResubscribePush(serverKey);
+        return;
+      }
+
       updatePushUI('subscribed');
       // Auto re-register subscription with backend DB to ensure endpoint exists in server DB
       const subJson = sub.toJSON();
@@ -395,30 +461,12 @@ async function togglePushSubscription() {
         return;
       }
 
-      const keyResp = await fetch('/api/push/vapid-key');
-      const keyData = await keyResp.json();
-      if (!keyData.publicKey) {
-        throw new Error('No se pudo obtener la clave pública VAPID.');
+      const newSub = await forceResubscribePush();
+      if (newSub) {
+        showNetworkStatus('🔔 Notificaciones Push activadas correctamente', 'success');
+      } else {
+        throw new Error('No se pudo completar la suscripción.');
       }
-
-      const applicationServerKey = urlBase64ToUint8Array(keyData.publicKey);
-      sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: applicationServerKey
-      });
-
-      const subJson = sub.toJSON();
-      await fetch('/api/push/subscribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          endpoint: subJson.endpoint,
-          keys: subJson.keys
-        })
-      });
-
-      updatePushUI('subscribed');
-      showNetworkStatus('🔔 Notificaciones Push activadas correctamente', 'success');
     }
   } catch (err) {
     console.error('[PUSH] Error al cambiar suscripción:', err);
@@ -428,8 +476,20 @@ async function togglePushSubscription() {
 
 async function sendTestPushNotification() {
   try {
-    const resp = await fetch('/api/push/test', { method: 'POST' });
-    const data = await resp.json();
+    let resp = await fetch('/api/push/test', { method: 'POST' });
+    let data = await resp.json();
+
+    // If 403 Forbidden or 401 error occurred, auto-renew subscription and retry once
+    if (!resp.ok && data.error && (data.error.includes('403') || data.error.includes('401'))) {
+      console.warn('[PUSH] Error 403/401 en prueba. Intentando auto-renovar suscripción VAPID...');
+      showNetworkStatus('Renovando clave de suscripción...', 'warning');
+      const newSub = await forceResubscribePush();
+      if (newSub) {
+        resp = await fetch('/api/push/test', { method: 'POST' });
+        data = await resp.json();
+      }
+    }
+
     if (resp.ok && data.ok) {
       showNetworkStatus('🔔 Notificación enviada a ' + (data.success || 1) + ' dispositivo(s)', 'success');
     } else {
