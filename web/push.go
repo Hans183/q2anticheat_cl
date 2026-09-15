@@ -31,8 +31,8 @@ func NewPushManager(db *database.DB) (*PushManager, error) {
 
 func (pm *PushManager) initKeys() error {
 	// 1. Check environment variables first (allows manual override)
-	envPub := strings.TrimSpace(os.Getenv("VAPID_PUBLIC_KEY"))
-	envPriv := strings.TrimSpace(os.Getenv("VAPID_PRIVATE_KEY"))
+	envPub := strings.Trim(strings.TrimSpace(os.Getenv("VAPID_PUBLIC_KEY")), "\"'")
+	envPriv := strings.Trim(strings.TrimSpace(os.Getenv("VAPID_PRIVATE_KEY")), "\"'")
 	if envPub != "" && envPriv != "" {
 		pm.publicKey = envPub
 		pm.privateKey = envPriv
@@ -109,20 +109,28 @@ func (pm *PushManager) sendToSingle(data []byte, subscriberEmail string, subReco
 		TTL:             86400,
 	})
 
+	var respBody []byte
 	if resp != nil {
 		defer resp.Body.Close()
-		io.Copy(io.Discard, resp.Body)
+		respBody, _ = io.ReadAll(resp.Body)
 	}
 
 	if resp != nil {
 		statusCode := resp.StatusCode
+		bodyStr := strings.TrimSpace(string(respBody))
 		if statusCode == http.StatusGone || statusCode == http.StatusNotFound || statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden || statusCode == http.StatusBadRequest {
-			log.Printf("[PUSH] Subscription invalid/expired (status %d), removing endpoint: %s", statusCode, subRecord.Endpoint)
+			log.Printf("[PUSH] Subscription invalid/expired (status %d, body: %q), removing endpoint: %s", statusCode, bodyStr, subRecord.Endpoint)
 			_ = pm.db.DeletePushSubscription(subRecord.Endpoint)
+			if bodyStr != "" {
+				return fmt.Errorf("status %d: %s", statusCode, bodyStr)
+			}
 			return fmt.Errorf("subscription expired or invalid (status %d)", statusCode)
 		}
 		if statusCode != http.StatusCreated && statusCode != http.StatusOK {
-			log.Printf("[PUSH] Unexpected status %d for subscription ID %d (%s)", statusCode, subRecord.ID, subRecord.Endpoint)
+			log.Printf("[PUSH] Unexpected status %d (body: %q) for subscription ID %d (%s)", statusCode, bodyStr, subRecord.ID, subRecord.Endpoint)
+			if bodyStr != "" {
+				return fmt.Errorf("status %d: %s", statusCode, bodyStr)
+			}
 			return fmt.Errorf("push service returned status %d", statusCode)
 		}
 		log.Printf("[PUSH] Notification sent OK (status %d) to subscription ID %d", statusCode, subRecord.ID)
@@ -160,8 +168,8 @@ func (pm *PushManager) SendToAllSync(payload PushNotificationPayload) PushSendRe
 		return res
 	}
 
-	subscriberEmail := os.Getenv("VAPID_SUBSCRIBER")
-	if subscriberEmail == "" {
+	subscriberEmail := strings.Trim(strings.TrimSpace(os.Getenv("VAPID_SUBSCRIBER")), "\"'")
+	if subscriberEmail == "" || strings.HasSuffix(subscriberEmail, ".local") || strings.HasSuffix(subscriberEmail, "localhost") {
 		subscriberEmail = "mailto:admin@q2anticheat.com"
 	}
 

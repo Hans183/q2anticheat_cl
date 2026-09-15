@@ -1,5 +1,5 @@
 // Service Worker for Q2PRO Anticheat PWA
-const CACHE_NAME = 'q2anticheat-pwa-v2';
+const CACHE_NAME = 'q2anticheat-pwa-v3';
 const PRECACHE_ASSETS = [
   '/',
   '/static/style.css',

@@ -17,7 +17,7 @@ services:
       # If unset, keys are auto-generated and stored in the DB (requires persistent volume).
       - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY:-}
       - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY:-}
-      - VAPID_SUBSCRIBER=${VAPID_SUBSCRIBER:-mailto:admin@q2anticheat.local}
+      - VAPID_SUBSCRIBER=${VAPID_SUBSCRIBER:-mailto:admin@q2anticheat.com}
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:27916"]
       interval: 30s
