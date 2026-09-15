@@ -346,6 +346,20 @@ async function checkPushSubscriptionState() {
     const sub = await reg.pushManager.getSubscription();
     if (sub) {
       updatePushUI('subscribed');
+      // Auto re-register subscription with backend DB to ensure endpoint exists in server DB
+      const subJson = sub.toJSON();
+      if (subJson && subJson.endpoint && subJson.keys) {
+        fetch('/api/push/subscribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            endpoint: subJson.endpoint,
+            keys: subJson.keys
+          })
+        }).catch(function(err) {
+          console.warn('[PUSH] Re-sync subscription warning:', err);
+        });
+      }
     } else {
       updatePushUI('unsubscribed');
     }
@@ -416,13 +430,15 @@ async function sendTestPushNotification() {
   try {
     const resp = await fetch('/api/push/test', { method: 'POST' });
     const data = await resp.json();
-    if (data.ok) {
-      showNetworkStatus('Notificación de prueba enviada', 'success');
+    if (resp.ok && data.ok) {
+      showNetworkStatus('🔔 Notificación enviada a ' + (data.success || 1) + ' dispositivo(s)', 'success');
     } else {
-      alert('Error enviando notificación de prueba');
+      const errMsg = data.error || 'No se pudo entregar la notificación de prueba.';
+      alert('⚠️ Error enviando notificación de prueba:\n' + errMsg + '\n\nSugerencia: Haz clic en el botón de la campana para desactivar y volver a activar las notificaciones.');
+      showNetworkStatus('Error en notificaciones: ' + errMsg, 'warning');
     }
   } catch (err) {
-    alert('Error: ' + err.message);
+    alert('Error enviando prueba: ' + err.message);
   }
 }
 

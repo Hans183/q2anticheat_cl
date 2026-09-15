@@ -85,60 +85,99 @@ type PushNotificationPayload struct {
 	Tag   string `json:"tag,omitempty"`
 }
 
-// SendToAll sends a Web Push notification asynchronously to all registered subscriptions
-func (pm *PushManager) SendToAll(payload PushNotificationPayload) {
+// PushSendResult contains detailed diagnostic metrics for push dispatches
+type PushSendResult struct {
+	TotalSubscriptions int      `json:"total_subscriptions"`
+	SuccessCount       int      `json:"success_count"`
+	FailedCount        int      `json:"failed_count"`
+	Errors             []string `json:"errors,omitempty"`
+}
+
+func (pm *PushManager) sendToSingle(data []byte, subscriberEmail string, subRecord database.PushSubscriptionRecord) error {
+	sub := &webpush.Subscription{
+		Endpoint: subRecord.Endpoint,
+		Keys: webpush.Keys{
+			P256dh: subRecord.P256dh,
+			Auth:   subRecord.Auth,
+		},
+	}
+
+	resp, err := webpush.SendNotification(data, sub, &webpush.Options{
+		Subscriber:      subscriberEmail,
+		VAPIDPublicKey:  pm.publicKey,
+		VAPIDPrivateKey: pm.privateKey,
+		TTL:             86400,
+	})
+
+	if resp != nil {
+		defer resp.Body.Close()
+		io.Copy(io.Discard, resp.Body)
+	}
+
+	if resp != nil {
+		statusCode := resp.StatusCode
+		if statusCode == http.StatusGone || statusCode == http.StatusNotFound || statusCode == http.StatusUnauthorized || statusCode == http.StatusBadRequest {
+			log.Printf("[PUSH] Subscription invalid/expired (status %d), removing endpoint: %s", statusCode, subRecord.Endpoint)
+			_ = pm.db.DeletePushSubscription(subRecord.Endpoint)
+			return fmt.Errorf("subscription expired or invalid (status %d)", statusCode)
+		}
+		if statusCode != http.StatusCreated && statusCode != http.StatusOK {
+			log.Printf("[PUSH] Unexpected status %d for subscription ID %d (%s)", statusCode, subRecord.ID, subRecord.Endpoint)
+			return fmt.Errorf("push service returned status %d", statusCode)
+		}
+		log.Printf("[PUSH] Notification sent OK (status %d) to subscription ID %d", statusCode, subRecord.ID)
+		return nil
+	}
+
+	if err != nil {
+		log.Printf("[PUSH] Error sending notification to subscription ID %d: %v", subRecord.ID, err)
+		return err
+	}
+
+	return nil
+}
+
+// SendToAllSync sends Web Push notifications synchronously and returns detailed diagnostic results
+func (pm *PushManager) SendToAllSync(payload PushNotificationPayload) PushSendResult {
+	res := PushSendResult{}
 	subs, err := pm.db.GetPushSubscriptions()
 	if err != nil {
 		log.Printf("[PUSH] Error retrieving push subscriptions: %v", err)
-		return
+		res.Errors = append(res.Errors, fmt.Sprintf("db error: %v", err))
+		return res
 	}
+
+	res.TotalSubscriptions = len(subs)
 	if len(subs) == 0 {
-		return
+		log.Printf("[PUSH] SendToAllSync called but 0 active subscriptions found in DB")
+		return res
 	}
 
 	data, err := json.Marshal(payload)
 	if err != nil {
 		log.Printf("[PUSH] Error marshaling push payload: %v", err)
-		return
+		res.Errors = append(res.Errors, fmt.Sprintf("marshal error: %v", err))
+		return res
 	}
 
 	subscriberEmail := os.Getenv("VAPID_SUBSCRIBER")
 	if subscriberEmail == "" {
-		subscriberEmail = "mailto:admin@q2anticheat.local"
+		subscriberEmail = "mailto:admin@q2anticheat.com"
 	}
 
 	for _, s := range subs {
-		sub := &webpush.Subscription{
-			Endpoint: s.Endpoint,
-			Keys: webpush.Keys{
-				P256dh: s.P256dh,
-				Auth:   s.Auth,
-			},
+		if err := pm.sendToSingle(data, subscriberEmail, s); err != nil {
+			res.FailedCount++
+			res.Errors = append(res.Errors, fmt.Sprintf("sub %d: %v", s.ID, err))
+		} else {
+			res.SuccessCount++
 		}
-
-		go func(subRecord database.PushSubscriptionRecord, s *webpush.Subscription) {
-			resp, err := webpush.SendNotification(data, s, &webpush.Options{
-				Subscriber:      subscriberEmail,
-				VAPIDPublicKey:  pm.publicKey,
-				VAPIDPrivateKey: pm.privateKey,
-				TTL:             86400,
-			})
-			if err != nil {
-				log.Printf("[PUSH] Error sending notification to subscription ID %d: %v", subRecord.ID, err)
-				return
-			}
-			// Always drain and close the body to release the TCP connection
-			io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
-
-			if resp.StatusCode == http.StatusGone || resp.StatusCode == http.StatusNotFound {
-				log.Printf("[PUSH] Subscription expired or revoked (%d), deleting: %s", resp.StatusCode, subRecord.Endpoint)
-				_ = pm.db.DeletePushSubscription(subRecord.Endpoint)
-			} else if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-				log.Printf("[PUSH] Unexpected status %d for subscription ID %d (%s)", resp.StatusCode, subRecord.ID, subRecord.Endpoint)
-			} else {
-				log.Printf("[PUSH] Notification sent OK (status %d) to subscription ID %d", resp.StatusCode, subRecord.ID)
-			}
-		}(s, sub)
 	}
+
+	return res
+}
+
+// SendToAll sends a Web Push notification asynchronously to all registered subscriptions
+func (pm *PushManager) SendToAll(payload PushNotificationPayload) {
+	go pm.SendToAllSync(payload)
 }

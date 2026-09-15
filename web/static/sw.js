@@ -133,6 +133,8 @@ self.addEventListener('push', (event) => {
     }
   }
 
+  console.log('[SW] Push notification received:', data);
+
   const options = {
     body: data.body,
     icon: data.icon || '/static/icon-192.png',

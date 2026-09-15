@@ -870,8 +870,9 @@ func (ws *WebServer) handleAPIPushUnsubscribe(w http.ResponseWriter, r *http.Req
 }
 
 func (ws *WebServer) handleAPIPushTest(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 	if r.Method != "POST" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -880,7 +881,7 @@ func (ws *WebServer) handleAPIPushTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ws.pushMgr.SendToAll(PushNotificationPayload{
+	result := ws.pushMgr.SendToAllSync(PushNotificationPayload{
 		Title: "🔔 Notificación de Prueba",
 		Body:  "Las notificaciones Push de Anticheat Q2PRO están funcionando correctamente.",
 		Icon:  "/static/icon-192.png",
@@ -889,7 +890,33 @@ func (ws *WebServer) handleAPIPushTest(w http.ResponseWriter, r *http.Request) {
 		Tag:   "test-notification",
 	})
 
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"ok":true}`)
+	if result.TotalSubscriptions == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":    false,
+			"error": "No hay dispositivos suscritos en la base de datos.",
+			"total": 0,
+		})
+		return
+	}
+
+	if result.SuccessCount == 0 && result.FailedCount > 0 {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":      false,
+			"error":   fmt.Sprintf("Error enviando a %d dispositivo(s): %s", result.FailedCount, strings.Join(result.Errors, "; ")),
+			"total":   result.TotalSubscriptions,
+			"failed":  result.FailedCount,
+			"success": 0,
+		})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":      true,
+		"total":   result.TotalSubscriptions,
+		"success": result.SuccessCount,
+		"failed":  result.FailedCount,
+	})
 }
 
