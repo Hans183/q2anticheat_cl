@@ -163,6 +163,26 @@ func main() {
 		}
 	}()
 
+	// Periodic screenshot retention cleanup (runs daily, and once on startup after 10s)
+	go func() {
+		time.Sleep(10 * time.Second)
+		if days := db.GetRetentionDays(); days > 0 {
+			if deleted, freed, err := storage.PurgeOlderThan(days); err == nil && deleted > 0 {
+				log.Printf("[MAINTENANCE] Startup cleanup: purged %d old screenshots (%d bytes freed)", deleted, freed)
+			}
+		}
+
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			if days := db.GetRetentionDays(); days > 0 {
+				if deleted, freed, err := storage.PurgeOlderThan(days); err == nil && deleted > 0 {
+					log.Printf("[MAINTENANCE] Daily cleanup: purged %d old screenshots (%d bytes freed)", deleted, freed)
+				}
+			}
+		}
+	}()
+
 	fmt.Println("Server is ready to accept connections")
 	fmt.Println("Press Ctrl+C to stop")
 	fmt.Println()

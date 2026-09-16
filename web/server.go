@@ -88,8 +88,12 @@ func (ws *WebServer) routes() {
 	ws.mux.Handle("/blacklist", ws.authMiddleware(http.HandlerFunc(ws.handleBlacklist)))
 	ws.mux.Handle("/servers", ws.authMiddleware(http.HandlerFunc(ws.handleServers)))
 	ws.mux.Handle("/settings", ws.authMiddleware(http.HandlerFunc(ws.handleSettings)))
+	ws.mux.Handle("/settings/retention", ws.authMiddleware(http.HandlerFunc(ws.handleSettingsRetention)))
 	ws.mux.Handle("/change-password", ws.authMiddleware(http.HandlerFunc(ws.handleChangePassword)))
 	ws.mux.Handle("/maintenance/purge-screenshots", ws.authMiddleware(http.HandlerFunc(ws.handlePurgeScreenshots)))
+	ws.mux.Handle("/api/settings", ws.authMiddleware(http.HandlerFunc(ws.handleAPISettings)))
+	ws.mux.Handle("/api/settings/retention", ws.authMiddleware(http.HandlerFunc(ws.handleAPISettingsRetention)))
+	ws.mux.Handle("/api/settings/cleanup", ws.authMiddleware(http.HandlerFunc(ws.handleAPISettingsCleanup)))
 	ws.mux.Handle("/api/stats", ws.authMiddleware(http.HandlerFunc(ws.handleAPIStats)))
 	ws.mux.Handle("/api/push/vapid-key", ws.authMiddleware(http.HandlerFunc(ws.handleAPIPushVapidKey)))
 	ws.mux.Handle("/api/push/subscribe", ws.authMiddleware(http.HandlerFunc(ws.handleAPIPushSubscribe)))
@@ -642,15 +646,50 @@ func (ws *WebServer) handleSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	stats, _ := ws.db.GetStats()
 
+	dbSize, _ := ws.db.GetDBSize()
+	var screenshotFiles int
+	var screenshotDiskBytes int64
+	if ws.handler != nil && ws.handler.Storage() != nil {
+		screenshotFiles, screenshotDiskBytes, _ = ws.handler.Storage().GetDiskStats()
+	}
+	retentionDays := ws.db.GetRetentionDays()
+
 	data := map[string]interface{}{
-		"AdminUser":   adminUser,
-		"Stats":       stats,
-		"CurrentPage": "settings",
-		"Msg":         r.URL.Query().Get("msg"),
-		"Error":       r.URL.Query().Get("error"),
-		"Count":       r.URL.Query().Get("count"),
+		"AdminUser":           adminUser,
+		"Stats":               stats,
+		"CurrentPage":         "settings",
+		"Msg":                 r.URL.Query().Get("msg"),
+		"Error":               r.URL.Query().Get("error"),
+		"Count":               r.URL.Query().Get("count"),
+		"Freed":               r.URL.Query().Get("freed"),
+		"DBSize":              dbSize,
+		"DBPath":              ws.db.GetPath(),
+		"ScreenshotFiles":     screenshotFiles,
+		"ScreenshotDiskBytes": screenshotDiskBytes,
+		"RetentionDays":       retentionDays,
 	}
 	ws.templates.Execute(w, "settings", data)
+}
+
+func (ws *WebServer) handleSettingsRetention(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Redirect(w, r, "/settings", http.StatusFound)
+		return
+	}
+
+	days, err := strconv.Atoi(strings.TrimSpace(r.FormValue("retention_days")))
+	if err != nil || days < 0 {
+		http.Redirect(w, r, "/settings?error=invalid_retention", http.StatusFound)
+		return
+	}
+
+	if err := ws.db.SetRetentionDays(days); err != nil {
+		log.Printf("[WEB] Error saving retention days: %v", err)
+		http.Redirect(w, r, "/settings?error=db_error", http.StatusFound)
+		return
+	}
+
+	http.Redirect(w, r, "/settings?msg=retention_saved", http.StatusFound)
 }
 
 func (ws *WebServer) handleChangePassword(w http.ResponseWriter, r *http.Request) {
@@ -711,19 +750,137 @@ func (ws *WebServer) handlePurgeScreenshots(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	days, _ := strconv.Atoi(r.FormValue("days"))
-	if days <= 0 {
-		days = 30
+	daysStr := strings.TrimSpace(r.FormValue("days"))
+	var days int
+	if daysStr != "" {
+		days, _ = strconv.Atoi(daysStr)
+	} else {
+		days = ws.db.GetRetentionDays()
 	}
 
-	count, err := ws.db.DeleteOldScreenshots(days)
+	if days <= 0 {
+		http.Redirect(w, r, "/settings?error=retention_disabled", http.StatusFound)
+		return
+	}
+
+	var count int
+	var freed int64
+	var err error
+
+	if ws.handler != nil && ws.handler.Storage() != nil {
+		count, freed, err = ws.handler.Storage().PurgeOlderThan(days)
+	} else {
+		dbCount, dbErr := ws.db.DeleteOldScreenshots(days)
+		count = int(dbCount)
+		err = dbErr
+	}
+
 	if err != nil {
 		log.Printf("[WEB] Error purging screenshots: %v", err)
 		http.Redirect(w, r, "/settings?error=purge_failed", http.StatusFound)
 		return
 	}
 
-	http.Redirect(w, r, fmt.Sprintf("/settings?msg=purged&count=%d", count), http.StatusFound)
+	http.Redirect(w, r, fmt.Sprintf("/settings?msg=purged&count=%d&freed=%d", count, freed), http.StatusFound)
+}
+
+func (ws *WebServer) handleAPISettings(w http.ResponseWriter, r *http.Request) {
+	dbSize, _ := ws.db.GetDBSize()
+	var screenshotFiles int
+	var screenshotDiskBytes int64
+	if ws.handler != nil && ws.handler.Storage() != nil {
+		screenshotFiles, screenshotDiskBytes, _ = ws.handler.Storage().GetDiskStats()
+	}
+	retentionDays := ws.db.GetRetentionDays()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"db_size":               dbSize,
+		"db_path":               ws.db.GetPath(),
+		"screenshot_files":      screenshotFiles,
+		"screenshot_disk_bytes": screenshotDiskBytes,
+		"retention_days":        retentionDays,
+	})
+}
+
+func (ws *WebServer) handleAPISettingsRetention(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Days int `json:"days"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		return
+	}
+
+	if req.Days < 0 {
+		http.Error(w, `{"error":"invalid retention days"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := ws.db.SetRetentionDays(req.Days); err != nil {
+		http.Error(w, `{"error":"db error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":             true,
+		"retention_days": req.Days,
+	})
+}
+
+func (ws *WebServer) handleAPISettingsCleanup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Days int `json:"days"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.Days <= 0 {
+		req.Days = ws.db.GetRetentionDays()
+	}
+
+	if req.Days <= 0 {
+		http.Error(w, `{"error":"retention is disabled"}`, http.StatusBadRequest)
+		return
+	}
+
+	var count int
+	var freed int64
+	var err error
+
+	if ws.handler != nil && ws.handler.Storage() != nil {
+		count, freed, err = ws.handler.Storage().PurgeOlderThan(req.Days)
+	} else {
+		dbCount, dbErr := ws.db.DeleteOldScreenshots(req.Days)
+		count = int(dbCount)
+		err = dbErr
+	}
+
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":    false,
+			"error": err.Error(),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":          true,
+		"deleted":     count,
+		"freed_bytes": freed,
+	})
 }
 
 func (ws *WebServer) handleAPIStats(w http.ResponseWriter, r *http.Request) {

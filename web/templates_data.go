@@ -1014,30 +1014,118 @@ function filterBlacklistTable() {
 </head><body>
 {{template "sidebar" .}}
 <div class="main-content">
-<div class="topbar"><h2>Configuración y Mantenimiento</h2></div>
+<div class="topbar"><h2>Configuración y Almacenamiento</h2></div>
 <div class="content">
 
-{{if eq .Msg "password_changed"}}
+{{if eq .Msg "password_updated"}}
 <div class="alert alert-success"><span>&#10004;</span> La contraseña de administrador se ha cambiado exitosamente.</div>
+{{else if eq .Msg "retention_saved"}}
+<div class="alert alert-success"><span>&#10004;</span> Política de retención de capturas actualizada exitosamente.</div>
 {{else if eq .Msg "purged"}}
-<div class="alert alert-success"><span>&#10004;</span> Capturas antiguas purgadas exitosamente del disco y base de datos.</div>
+<div class="alert alert-success"><span>&#10004;</span> Purga completada: <strong>{{.Count}} capturas</strong> eliminadas ({{formatBytes .Freed}} liberados).</div>
 {{else if eq .Error "password_mismatch"}}
 <div class="alert alert-danger"><span>&#9888;</span> La nueva contraseña y la confirmación no coinciden.</div>
-{{else if eq .Error "invalid_old_password"}}
+{{else if eq .Error "wrong_old_password"}}
 <div class="alert alert-danger"><span>&#9888;</span> La contraseña actual ingresada es incorrecta.</div>
-{{else if eq .Error "empty_password"}}
-<div class="alert alert-danger"><span>&#9888;</span> La nueva contraseña no puede estar vacía.</div>
-{{else if eq .Error "change_failed"}}
-<div class="alert alert-danger"><span>&#9888;</span> Error al actualizar la contraseña en la base de datos.</div>
+{{else if eq .Error "password_too_short"}}
+<div class="alert alert-danger"><span>&#9888;</span> La nueva contraseña debe tener al menos 4 caracteres.</div>
+{{else if eq .Error "invalid_retention"}}
+<div class="alert alert-danger"><span>&#9888;</span> Valor de días de retención inválido.</div>
+{{else if eq .Error "retention_disabled"}}
+<div class="alert alert-danger"><span>&#9888;</span> La retención está deshabilitada (0 días). Selecciona un plazo mayor a 0 para purgar.</div>
 {{else if eq .Error "purge_failed"}}
 <div class="alert alert-danger"><span>&#9888;</span> Error durante la purga de capturas.</div>
+{{else if eq .Error "db_error"}}
+<div class="alert alert-danger"><span>&#9888;</span> Error en la base de datos.</div>
 {{end}}
 
+<!-- Storage Overview Cards -->
+<div class="stats-grid" style="margin-bottom:24px;">
+  <div class="stat-card">
+    <div class="stat-icon purple">&#128450;</div>
+    <div class="stat-info">
+      <div class="stat-value">{{formatBytes .DBSize}}</div>
+      <div class="stat-label">Base de Datos SQLite</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:2px;word-break:break-all;">{{.DBPath}}</div>
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon blue">&#128247;</div>
+    <div class="stat-info">
+      <div class="stat-value">{{formatBytes .ScreenshotDiskBytes}}</div>
+      <div class="stat-label">Capturas en Disco ({{.ScreenshotFiles}} archivos)</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">Organizadas por fecha (YYYY-MM-DD)</div>
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon green">&#9201;</div>
+    <div class="stat-info">
+      <div class="stat-value">{{if eq .RetentionDays 0}}Deshabilitada{{else}}{{.RetentionDays}} días{{end}}</div>
+      <div class="stat-label">Retención Automática</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">Limpieza diaria automática</div>
+    </div>
+  </div>
+</div>
+
 <div class="grid-2">
+  <!-- Retention & Cleanup Card -->
   <div class="card">
-    <div class="card-header"><h3>&#128274; Seguridad - Cambiar Contraseña de Admin</h3></div>
+    <div class="card-header"><h3>&#128450; Retención y Limpieza de Capturas</h3></div>
+    <div class="card-body">
+      <form method="POST" action="/settings/retention" style="margin-bottom:20px;">
+        <h4 style="margin:0 0 8px 0; font-size:14px; color:var(--text-primary);">Configurar Retención Automática Diaria</h4>
+        <p style="font-size:12px; color:var(--text-secondary); margin-bottom:12px;">
+          El servidor ejecuta un chequeo automático diario eliminando capturas y liberando espacio de la base de datos.
+        </p>
+        <div class="form-group" style="margin-bottom:14px;">
+          <label>Conservar capturas por:</label>
+          <select name="retention_days" style="width:100%; padding:9px 12px; border-radius:6px; background:var(--bg-primary); border:1px solid var(--border); color:var(--text-primary);">
+            <option value="7" {{if eq .RetentionDays 7}}selected{{end}}>7 días (1 semana)</option>
+            <option value="15" {{if eq .RetentionDays 15}}selected{{end}}>15 días (2 semanas)</option>
+            <option value="30" {{if eq .RetentionDays 30}}selected{{end}}>30 días (1 mes - Recomendado)</option>
+            <option value="60" {{if eq .RetentionDays 60}}selected{{end}}>60 días (2 meses)</option>
+            <option value="90" {{if eq .RetentionDays 90}}selected{{end}}>90 días (3 meses)</option>
+            <option value="180" {{if eq .RetentionDays 180}}selected{{end}}>180 días (6 meses)</option>
+            <option value="365" {{if eq .RetentionDays 365}}selected{{end}}>365 días (1 año)</option>
+            <option value="0" {{if eq .RetentionDays 0}}selected{{end}}>0 (Deshabilitar retención automática)</option>
+          </select>
+        </div>
+        <button type="submit" class="btn btn-primary">&#128190; Guardar Política de Retención</button>
+      </form>
+
+      <hr style="border:0; border-top:1px solid var(--border); margin:20px 0;">
+
+      <form method="POST" action="/maintenance/purge-screenshots" onsubmit="return confirm('¿Está seguro de eliminar permanentemente los screenshots anteriores al plazo seleccionado?')">
+        <h4 style="margin:0 0 8px 0; font-size:14px; color:var(--text-primary);">Ejecutar Limpieza Inmediata</h4>
+        <p style="font-size:12px; color:var(--text-secondary); margin-bottom:12px;">
+          Elimina inmediatamente archivos de imagen del disco y registros asociados para recuperar espacio.
+        </p>
+        <div class="form-group" style="margin-bottom:14px;">
+          <label>Purgar capturas con más de:</label>
+          <select name="days" style="width:100%; padding:9px 12px; border-radius:6px; background:var(--bg-primary); border:1px solid var(--border); color:var(--text-primary);">
+            <option value="7">7 días</option>
+            <option value="15">15 días</option>
+            <option value="30" selected>30 días (1 mes)</option>
+            <option value="60">60 días (2 meses)</option>
+            <option value="90">90 días (3 meses)</option>
+            <option value="180">180 días (6 meses)</option>
+            <option value="365">365 días (1 año)</option>
+          </select>
+        </div>
+        <button type="submit" class="btn btn-danger">&#128465; Purgar Archivos Ahora</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Admin Password Card -->
+  <div class="card">
+    <div class="card-header"><h3>&#128274; Seguridad - Cambiar Contraseña</h3></div>
     <div class="card-body">
       <form method="POST" action="/change-password">
+        <div class="form-group" style="margin-bottom:14px;">
+          <label>Usuario Actual</label>
+          <input type="text" value="{{.AdminUser}}" disabled style="width:100%; padding:9px 12px; border-radius:6px; background:var(--bg-primary); border:1px solid var(--border); color:var(--text-muted); opacity:0.8;">
+        </div>
         <div class="form-group" style="margin-bottom:14px;">
           <label>Contraseña Actual</label>
           <input type="password" name="old_password" required placeholder="Contraseña actual" style="width:100%; padding:9px 12px; border-radius:6px; background:var(--bg-primary); border:1px solid var(--border); color:var(--text-primary);">
@@ -1051,34 +1139,6 @@ function filterBlacklistTable() {
           <input type="password" name="confirm_password" required placeholder="Repita la nueva contraseña" style="width:100%; padding:9px 12px; border-radius:6px; background:var(--bg-primary); border:1px solid var(--border); color:var(--text-primary);">
         </div>
         <button type="submit" class="btn btn-primary">&#128190; Actualizar Contraseña</button>
-      </form>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="card-header"><h3>&#128450; Mantenimiento de Almacenamiento</h3></div>
-    <div class="card-body">
-      <div style="margin-bottom:16px;">
-        <div class="info-row"><span>Total capturas en disco:</span><strong>{{index .Stats "total_screenshots"}} archivos</strong></div>
-        <div class="info-row"><span>Espacio en disco ocupado:</span><strong id="total-size">{{index .Stats "total_size"}} bytes</strong></div>
-      </div>
-      <hr style="border:0; border-top:1px solid var(--border); margin:16px 0;">
-      <h4 style="margin:0 0 8px 0; font-size:14px; color:var(--text-primary);">Purga Automática de Screenshots Antiguos</h4>
-      <p style="font-size:12px; color:var(--text-secondary); margin-bottom:14px;">
-        Elimina las imágenes y registros de screenshots más antiguos que el período seleccionado para liberar espacio en disco.
-      </p>
-      <form method="POST" action="/maintenance/purge-screenshots" onsubmit="return confirm('¿Está seguro de eliminar permanentemente los screenshots anteriores al plazo seleccionado?')">
-        <div class="form-group" style="margin-bottom:14px;">
-          <label>Eliminar screenshots con más de:</label>
-          <select name="days" style="width:100%; padding:9px 12px; border-radius:6px; background:var(--bg-primary); border:1px solid var(--border); color:var(--text-primary);">
-            <option value="30">30 días (1 mes)</option>
-            <option value="60">60 días (2 meses)</option>
-            <option value="90">90 días (3 meses)</option>
-            <option value="180">180 días (6 meses)</option>
-            <option value="365">365 días (1 año)</option>
-          </select>
-        </div>
-        <button type="submit" class="btn btn-danger">&#128465; Purgar Archivos Antiguos</button>
       </form>
     </div>
   </div>

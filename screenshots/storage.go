@@ -92,3 +92,96 @@ func (s *Storage) SaveScreenshot(serverAddr, playerIP, playerName string,
 
 	return filePath, nil
 }
+
+// BaseDir returns the screenshots base directory
+func (s *Storage) BaseDir() string {
+	return s.baseDir
+}
+
+// GetDiskStats computes total number of screenshot files and their total size in bytes
+func (s *Storage) GetDiskStats() (int, int64, error) {
+	var count int
+	var totalBytes int64
+
+	err := filepath.Walk(s.baseDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if !info.IsDir() {
+			count++
+			totalBytes += info.Size()
+		}
+		return nil
+	})
+
+	return count, totalBytes, err
+}
+
+// PurgeOlderThan deletes screenshots and folders older than specified days.
+// If days <= 0, no action is taken.
+func (s *Storage) PurgeOlderThan(days int) (int, int64, error) {
+	if days <= 0 {
+		return 0, 0, nil
+	}
+
+	cutoff := time.Now().AddDate(0, 0, -days)
+	oldRecords, err := s.db.GetScreenshotsOlderThan(cutoff)
+	if err != nil {
+		return 0, 0, fmt.Errorf("get old screenshots: %w", err)
+	}
+
+	var deletedCount int
+	var freedBytes int64
+
+	for _, rec := range oldRecords {
+		if rec.FilePath != "" {
+			if fi, err := os.Stat(rec.FilePath); err == nil {
+				freedBytes += fi.Size()
+				if err := os.Remove(rec.FilePath); err != nil && !os.IsNotExist(err) {
+					log.Printf("[SCREENSHOT] Warning: failed to delete file %s: %v", rec.FilePath, err)
+				}
+			}
+		}
+	}
+
+	// Delete from database
+	dbDeleted, err := s.db.DeleteScreenshotsOlderThan(cutoff)
+	if err != nil {
+		log.Printf("[SCREENSHOT] Warning: failed to delete DB records: %v", err)
+	}
+	deletedCount = int(dbDeleted)
+	if deletedCount == 0 && len(oldRecords) > 0 {
+		deletedCount = len(oldRecords)
+	}
+
+	// Clean up empty/old date directories in baseDir
+	entries, err := os.ReadDir(s.baseDir)
+	if err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				dirPath := filepath.Join(s.baseDir, entry.Name())
+				if folderDate, parseErr := time.Parse("2006-01-02", entry.Name()); parseErr == nil {
+					if folderDate.Before(cutoff.Truncate(24 * time.Hour)) {
+						os.RemoveAll(dirPath)
+					}
+				} else {
+					subEntries, _ := os.ReadDir(dirPath)
+					if len(subEntries) == 0 {
+						os.Remove(dirPath)
+					}
+				}
+			}
+		}
+	}
+
+	if deletedCount > 0 {
+		_ = s.db.Vacuum()
+	}
+
+	log.Printf("[SCREENSHOT] Purged %d old screenshots (%d bytes freed, older than %d days)", deletedCount, freedBytes, days)
+	return deletedCount, freedBytes, nil
+}
+

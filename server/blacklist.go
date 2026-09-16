@@ -40,7 +40,6 @@ func (bl *Blacklist) SetDB(db *database.DB) {
 var hardcodedProcessPatterns = []string{
 	"aimbot", "wallhack", "cheat", "inject", "hook",
 	"trainer", "hack", "speedhack", "noclip", "aimassist",
-	"cheatengine", "cheat engine", "ce.exe",
 	"artmoney", "gamehack", "gamemonitor",
 	"memoryhack", "memhack",
 	"injector", "dllinject", "processinject",

@@ -305,3 +305,64 @@ func TestPWAEndpoints(t *testing.T) {
 		t.Fatalf("expected manifest body to contain 'Dday AC'")
 	}
 }
+
+func TestWebSettingsAndRetention(t *testing.T) {
+	ws, db, handler, cleanup := setupTestWeb(t)
+	defer cleanup()
+
+	// 1. Get default settings
+	req := httptest.NewRequest("GET", "/settings", nil)
+	w := httptest.NewRecorder()
+	ws.handleSettings(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for /settings, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Configuración") {
+		t.Errorf("expected settings page to contain 'Configuración'")
+	}
+
+	// 2. Change retention days via POST /settings/retention
+	form := url.Values{}
+	form.Set("retention_days", "60")
+	req = httptest.NewRequest("POST", "/settings/retention", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w = httptest.NewRecorder()
+	ws.handleSettingsRetention(w, req)
+	if w.Code != http.StatusFound {
+		t.Fatalf("expected 302 Found redirect, got %d", w.Code)
+	}
+
+	if days := db.GetRetentionDays(); days != 60 {
+		t.Fatalf("expected retention days to be 60, got %d", days)
+	}
+
+	// 3. API settings JSON endpoint
+	req = httptest.NewRequest("GET", "/api/settings", nil)
+	w = httptest.NewRecorder()
+	ws.handleAPISettings(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for /api/settings, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), `"retention_days":60`) {
+		t.Fatalf("expected JSON response to contain retention_days: 60, got %s", w.Body.String())
+	}
+
+	// 4. Purge screenshots via POST /maintenance/purge-screenshots
+	// Save a screenshot first
+	_, err := handler.Storage().SaveScreenshot("127.0.0.1:27910", "1.1.1.1", "PlayerOld", 1, 800, 600, 1, []byte("test"))
+	if err != nil {
+		t.Fatalf("save screenshot: %v", err)
+	}
+
+	form = url.Values{}
+	form.Set("days", "30")
+	req = httptest.NewRequest("POST", "/maintenance/purge-screenshots", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w = httptest.NewRecorder()
+	ws.handlePurgeScreenshots(w, req)
+	if w.Code != http.StatusFound {
+		t.Fatalf("expected 302 Found redirect, got %d", w.Code)
+	}
+}
+

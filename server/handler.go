@@ -39,6 +39,11 @@ func (h *Handler) Blacklist() *Blacklist {
 	return h.blacklist
 }
 
+// Storage returns the screenshot storage manager
+func (h *Handler) Storage() *screenshots.Storage {
+	return h.storage
+}
+
 // HandleMessage processes a single message from a game server
 func (h *Handler) HandleMessage(gs *GameServer, buf []byte) {
 	msg, err := protocol.ParseMessage(buf)

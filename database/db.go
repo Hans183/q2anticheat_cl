@@ -16,6 +16,7 @@ import (
 // DB wraps the SQLite database connection
 type DB struct {
 	conn *sql.DB
+	path string
 }
 
 // ScreenshotRecord represents a stored screenshot metadata
@@ -144,7 +145,7 @@ func New(dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
-	db := &DB{conn: conn}
+	db := &DB{conn: conn, path: dbPath}
 	if err := db.migrate(); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
@@ -1257,4 +1258,95 @@ func (db *DB) GetPushSubscriptions() ([]PushSubscriptionRecord, error) {
 	}
 	return list, rows.Err()
 }
+
+// GetPath returns the database file path
+func (db *DB) GetPath() string {
+	return db.path
+}
+
+// GetDBSize returns total file size in bytes for the database (including WAL and SHM if present)
+func (db *DB) GetDBSize() (int64, error) {
+	if db.path == "" || db.path == ":memory:" {
+		return 0, nil
+	}
+	var total int64
+	for _, ext := range []string{"", "-wal", "-shm"} {
+		if fi, err := os.Stat(db.path + ext); err == nil {
+			total += fi.Size()
+		}
+	}
+	return total, nil
+}
+
+// Vacuum executes VACUUM on SQLite database to reclaim free space
+func (db *DB) Vacuum() error {
+	_, err := db.conn.Exec("VACUUM")
+	return err
+}
+
+// GetScreenshotsOlderThan returns all screenshot records with timestamp older than cutoff
+func (db *DB) GetScreenshotsOlderThan(cutoff time.Time) ([]*ScreenshotRecord, error) {
+	rows, err := db.conn.Query(`
+		SELECT id, server_addr, player_ip, player_name, client_id,
+			width, height, format, file_path, file_size, timestamp, reviewed, notes
+		FROM screenshots WHERE timestamp < ?`, cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("query old screenshots: %w", err)
+	}
+	defer rows.Close()
+
+	var records []*ScreenshotRecord
+	for rows.Next() {
+		record := &ScreenshotRecord{}
+		var ts string
+		var notes sql.NullString
+		var clientID sql.NullInt64
+		if err := rows.Scan(
+			&record.ID, &record.ServerAddr, &record.PlayerIP, &record.PlayerName,
+			&clientID, &record.Width, &record.Height, &record.Format, &record.FilePath,
+			&record.FileSize, &ts, &record.Reviewed, &notes); err != nil {
+			return nil, err
+		}
+		if clientID.Valid {
+			record.ClientID = int(clientID.Int64)
+		}
+		if notes.Valid {
+			record.Notes = notes.String
+		}
+		record.Timestamp = parseTimestamp(ts)
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+// DeleteScreenshotsOlderThan deletes screenshot records with timestamp older than cutoff
+func (db *DB) DeleteScreenshotsOlderThan(cutoff time.Time) (int64, error) {
+	res, err := db.conn.Exec("DELETE FROM screenshots WHERE timestamp < ?", cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("delete old screenshots: %w", err)
+	}
+	return res.RowsAffected()
+}
+
+// GetRetentionDays returns the configured screenshot retention in days (0 = disabled, default = 30)
+func (db *DB) GetRetentionDays() int {
+	val, err := db.GetConfigValue("screenshot_retention_days")
+	if err != nil || val == "" {
+		return 30
+	}
+	var days int
+	if _, err := fmt.Sscanf(val, "%d", &days); err != nil || days < 0 {
+		return 30
+	}
+	return days
+}
+
+// SetRetentionDays sets the screenshot retention days in system_config
+func (db *DB) SetRetentionDays(days int) error {
+	if days < 0 {
+		days = 0
+	}
+	return db.SetConfigValue("screenshot_retention_days", fmt.Sprintf("%d", days))
+}
+
 
