@@ -75,6 +75,11 @@ func (pm *PushManager) PublicKey() string {
 	return pm.publicKey
 }
 
+// PrivateKey returns the VAPID private key
+func (pm *PushManager) PrivateKey() string {
+	return pm.privateKey
+}
+
 // PushNotificationPayload represents the JSON body sent to the Service Worker
 type PushNotificationPayload struct {
 	Title string `json:"title"`

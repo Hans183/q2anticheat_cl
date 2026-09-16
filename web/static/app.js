@@ -353,14 +353,25 @@ async function forceResubscribePush(keyPublicKey) {
     const reg = await navigator.serviceWorker.ready;
     let sub = await reg.pushManager.getSubscription();
     if (sub) {
-      await sub.unsubscribe();
+      try {
+        await sub.unsubscribe();
+      } catch (unsubErr) {
+        console.warn('[PUSH] Unsubscribe error (safe to ignore):', unsubErr);
+      }
     }
+
     if (!keyPublicKey) {
       const keyResp = await fetch('/api/push/vapid-key');
       const keyData = await keyResp.json();
-      keyPublicKey = keyData.publicKey;
+      keyPublicKey = keyData ? keyData.publicKey : null;
     }
-    if (!keyPublicKey) return null;
+    if (!keyPublicKey) {
+      console.error('[PUSH] No se pudo obtener la clave VAPID pública del servidor.');
+      return null;
+    }
+
+    // Short delay to allow browser push service unregistration to settle
+    await new Promise(resolve => setTimeout(resolve, 150));
 
     const applicationServerKey = urlBase64ToUint8Array(keyPublicKey);
     sub = await reg.pushManager.subscribe({
@@ -369,7 +380,7 @@ async function forceResubscribePush(keyPublicKey) {
     });
 
     const subJson = sub.toJSON();
-    await fetch('/api/push/subscribe', {
+    const saveResp = await fetch('/api/push/subscribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -377,11 +388,19 @@ async function forceResubscribePush(keyPublicKey) {
         keys: subJson.keys
       })
     });
-    updatePushUI('subscribed');
-    console.log('[PUSH] Suscripción renovada con éxito con la clave VAPID actual.');
-    return sub;
+
+    if (saveResp.ok) {
+      localStorage.setItem('ac_vapid_key', keyPublicKey);
+      localStorage.setItem('ac_push_subscribed', 'true');
+      updatePushUI('subscribed');
+      console.log('[PUSH] Suscripción renovada con éxito con la clave VAPID actual.');
+      return sub;
+    } else {
+      console.error('[PUSH] Error al registrar suscripción en la base de datos.');
+      return null;
+    }
   } catch (err) {
-    console.error('[PUSH] Error al auto-renovar suscripción:', err);
+    console.error('[PUSH] Error en forceResubscribePush:', err);
     return null;
   }
 }
@@ -395,24 +414,33 @@ async function checkPushSubscriptionState() {
   try {
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.getSubscription();
+
+    // Fetch server VAPID key
+    const keyResp = await fetch('/api/push/vapid-key');
+    const keyData = await keyResp.json();
+    const serverKey = keyData ? keyData.publicKey : null;
+
+    if (!serverKey) {
+      if (sub) updatePushUI('subscribed');
+      return;
+    }
+
+    const storedKey = localStorage.getItem('ac_vapid_key');
+    const isPermissionGranted = (Notification.permission === 'granted');
+
     if (sub) {
-      // Fetch server VAPID key to ensure match
-      const keyResp = await fetch('/api/push/vapid-key');
-      const keyData = await keyResp.json();
-      const serverKey = keyData ? keyData.publicKey : null;
-
-      const subKey = sub.options ? sub.options.applicationServerKey : null;
-      const subKeyBase64 = subKey ? arrayBufferToBase64Url(subKey) : '';
-      const serverKeyClean = serverKey ? serverKey.replace(/=+$/, '') : '';
-
-      if (subKeyBase64 && serverKeyClean && subKeyBase64 !== serverKeyClean) {
-        console.warn('[PUSH] Clave VAPID del navegador no coincide con el servidor. Re-suscribiendo automáticamente...');
+      // If server VAPID key rotated since last subscription, auto-heal
+      if (storedKey && storedKey !== serverKey && isPermissionGranted) {
+        console.warn('[PUSH] Clave VAPID del servidor cambió (' + storedKey + ' -> ' + serverKey + '). Auto-reparando suscripción...');
         await forceResubscribePush(serverKey);
         return;
       }
 
       updatePushUI('subscribed');
-      // Auto re-register subscription with backend DB to ensure endpoint exists in server DB
+      localStorage.setItem('ac_vapid_key', serverKey);
+      localStorage.setItem('ac_push_subscribed', 'true');
+
+      // Sync endpoint to DB to ensure it exists in case of DB restart
       const subJson = sub.toJSON();
       if (subJson && subJson.endpoint && subJson.keys) {
         fetch('/api/push/subscribe', {
@@ -423,14 +451,20 @@ async function checkPushSubscriptionState() {
             keys: subJson.keys
           })
         }).catch(function(err) {
-          console.warn('[PUSH] Re-sync subscription warning:', err);
+          console.warn('[PUSH] Re-sync warning:', err);
         });
       }
     } else {
-      updatePushUI('unsubscribed');
+      // No active subscription in browser
+      if (isPermissionGranted && localStorage.getItem('ac_push_subscribed') === 'true') {
+        console.log('[PUSH] Restaurando suscripción push...');
+        await forceResubscribePush(serverKey);
+      } else {
+        updatePushUI('unsubscribed');
+      }
     }
   } catch (err) {
-    console.warn('[PUSH] Error checking subscription:', err);
+    console.warn('[PUSH] Error comprobando estado de suscripción:', err);
     updatePushUI('unsubscribed');
   }
 }
@@ -447,6 +481,7 @@ async function togglePushSubscription() {
 
     if (sub) {
       await sub.unsubscribe();
+      localStorage.removeItem('ac_push_subscribed');
       await fetch('/api/push/unsubscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -476,30 +511,65 @@ async function togglePushSubscription() {
 
 async function sendTestPushNotification() {
   try {
+    showNetworkStatus('Enviando notificación de prueba...', 'info');
     let resp = await fetch('/api/push/test', { method: 'POST' });
     let data = await resp.json();
 
-    // If 403 Forbidden or 401 error occurred, auto-renew subscription and retry once
-    if (!resp.ok && data.error && (data.error.includes('403') || data.error.includes('401'))) {
-      console.warn('[PUSH] Error 403/401 en prueba. Intentando auto-renovar suscripción VAPID...');
-      showNetworkStatus('Renovando clave de suscripción...', 'warning');
+    // If 403 Forbidden, 401 or invalid credentials occurred, auto-heal and retry once
+    if (!resp.ok && data.error && (data.error.includes('403') || data.error.includes('401') || data.error.includes('credentials') || data.error.includes('No hay dispositivos'))) {
+      console.warn('[PUSH] Error en prueba (' + data.error + '). Reparando suscripción automáticamente...');
+      showNetworkStatus('Actualizando clave de suscripción...', 'warning');
       const newSub = await forceResubscribePush();
       if (newSub) {
+        await new Promise(r => setTimeout(r, 300));
         resp = await fetch('/api/push/test', { method: 'POST' });
         data = await resp.json();
       }
     }
 
     if (resp.ok && data.ok) {
-      showNetworkStatus('🔔 Notificación enviada a ' + (data.success || 1) + ' dispositivo(s)', 'success');
+      showNetworkStatus('🔔 ¡Notificación de prueba enviada exitosamente!', 'success');
     } else {
       const errMsg = data.error || 'No se pudo entregar la notificación de prueba.';
-      alert('⚠️ Error enviando notificación de prueba:\n' + errMsg + '\n\nSugerencia: Haz clic en el botón de la campana para desactivar y volver a activar las notificaciones.');
-      showNetworkStatus('Error en notificaciones: ' + errMsg, 'warning');
+      // Try one more clean auto-resubscribe in background
+      await forceResubscribePush();
+      alert('⚠️ Error enviando notificación de prueba:\n' + errMsg + '\n\nSe ha renovado la clave en este dispositivo. Intenta enviar la prueba nuevamente.');
+      showNetworkStatus('Suscripción renovada. Intenta de nuevo.', 'warning');
     }
   } catch (err) {
     alert('Error enviando prueba: ' + err.message);
   }
+}
+
+async function resetAllPushSubscriptions() {
+  if (!confirm('¿Desea limpiar todas las suscripciones push de la base de datos? Los dispositivos deberán re-suscribirse.')) {
+    return;
+  }
+  try {
+    const resp = await fetch('/api/push/reset', { method: 'POST' });
+    const data = await resp.json();
+    if (data.ok) {
+      // Re-subscribe current device
+      await forceResubscribePush();
+      showNetworkStatus('Suscripciones restablecidas y dispositivo re-vinculado', 'success');
+      setTimeout(() => location.reload(), 1000);
+    } else {
+      alert('Error: ' + (data.error || 'No se pudo restablecer'));
+    }
+  } catch (err) {
+    alert('Error al restablecer: ' + err.message);
+  }
+}
+
+function copyVapidEnvVars() {
+  const codeElem = document.getElementById('vapid-env-snippet');
+  if (!codeElem) return;
+  const text = codeElem.innerText || codeElem.textContent;
+  navigator.clipboard.writeText(text).then(function() {
+    showNetworkStatus('📋 Variables de entorno VAPID copiadas al portapapeles', 'success');
+  }).catch(function() {
+    alert('No se pudo copiar automáticamente. Por favor copia el texto manualmente.');
+  });
 }
 
 function updatePushUI(state) {

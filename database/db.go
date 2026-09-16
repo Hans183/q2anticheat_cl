@@ -1238,6 +1238,12 @@ func (db *DB) DeletePushSubscription(endpoint string) error {
 	return err
 }
 
+// ClearAllPushSubscriptions removes all push subscriptions from the database
+func (db *DB) ClearAllPushSubscriptions() error {
+	_, err := db.conn.Exec("DELETE FROM push_subscriptions")
+	return err
+}
+
 // GetPushSubscriptions retrieves all registered active push subscriptions
 func (db *DB) GetPushSubscriptions() ([]PushSubscriptionRecord, error) {
 	rows, err := db.conn.Query("SELECT id, endpoint, p256dh, auth, COALESCE(user_agent, ''), created_at FROM push_subscriptions")

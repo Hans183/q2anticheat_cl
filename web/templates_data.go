@@ -1151,17 +1151,41 @@ function filterBlacklistTable() {
       Recibe alertas instantáneas en tu celular o escritorio cada vez que se detecte una violación de un jugador en tiempo real.
     </p>
     <div class="info-row" style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border);">
-      <span>Estado de suscripción en este dispositivo:</span>
+      <span>Estado en este dispositivo:</span>
       <span id="push-status-text">Comprobando...</span>
     </div>
-    <div style="display:flex; gap:12px; margin-top:16px; flex-wrap:wrap;">
+    <div class="info-row" style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border);">
+      <span>Dispositivos registrados en la base de datos:</span>
+      <strong>{{.PushSubscriptionsCount}} dispositivo(s)</strong>
+    </div>
+
+    <div style="display:flex; gap:12px; margin-top:16px; margin-bottom:20px; flex-wrap:wrap;">
       <button type="button" class="push-toggle-btn" onclick="togglePushSubscription()" style="padding:8px 16px; font-size:14px;">
         🔔 Activar / Desactivar Notificaciones Push
       </button>
       <button type="button" class="btn btn-outline" onclick="sendTestPushNotification()" style="padding:8px 16px; font-size:14px;">
         🧪 Enviar Notificación de Prueba
       </button>
+      <button type="button" class="btn btn-outline" onclick="resetAllPushSubscriptions()" style="padding:8px 16px; font-size:14px; color:#ef4444;" title="Elimina suscripciones antiguas con claves obsoletas">
+        🔄 Restablecer Suscripciones
+      </button>
     </div>
+
+    {{if .VAPIDPublicKey}}
+    <hr style="border:0; border-top:1px solid var(--border); margin:20px 0;">
+    <div style="background:var(--bg-primary); border:1px solid var(--border); border-radius:8px; padding:16px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <h4 style="margin:0; font-size:14px; color:var(--text-primary);">🔑 Claves VAPID Permanentes (Para Coolify / Docker)</h4>
+        <button type="button" class="btn btn-sm btn-primary" onclick="copyVapidEnvVars()">📋 Copiar Variables</button>
+      </div>
+      <p style="font-size:12px; color:var(--text-secondary); margin-bottom:10px;">
+        Pega estas variables de entorno en la configuración de tu aplicación en <strong>Coolify</strong> para garantizar que las notificaciones Push nunca se desincronicen entre despliegues o actualizaciones:
+      </p>
+      <pre id="vapid-env-snippet" style="background:#0f172a; color:#38bdf8; padding:12px; border-radius:6px; font-size:12px; overflow-x:auto; user-select:all; margin:0;">VAPID_PUBLIC_KEY={{.VAPIDPublicKey}}
+VAPID_PRIVATE_KEY={{.VAPIDPrivateKey}}
+VAPID_SUBSCRIBER={{.VAPIDSubscriber}}</pre>
+    </div>
+    {{end}}
   </div>
 </div>
 

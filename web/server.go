@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
@@ -98,6 +99,7 @@ func (ws *WebServer) routes() {
 	ws.mux.Handle("/api/push/vapid-key", ws.authMiddleware(http.HandlerFunc(ws.handleAPIPushVapidKey)))
 	ws.mux.Handle("/api/push/subscribe", ws.authMiddleware(http.HandlerFunc(ws.handleAPIPushSubscribe)))
 	ws.mux.Handle("/api/push/unsubscribe", ws.authMiddleware(http.HandlerFunc(ws.handleAPIPushUnsubscribe)))
+	ws.mux.Handle("/api/push/reset", ws.authMiddleware(http.HandlerFunc(ws.handleAPIPushReset)))
 	ws.mux.Handle("/api/push/test", ws.authMiddleware(http.HandlerFunc(ws.handleAPIPushTest)))
 }
 
@@ -654,19 +656,34 @@ func (ws *WebServer) handleSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	retentionDays := ws.db.GetRetentionDays()
 
+	var vapidPub, vapidPriv string
+	if ws.pushMgr != nil {
+		vapidPub = ws.pushMgr.PublicKey()
+		vapidPriv = ws.pushMgr.PrivateKey()
+	}
+	vapidSub := os.Getenv("VAPID_SUBSCRIBER")
+	if vapidSub == "" {
+		vapidSub = "mailto:admin@q2anticheat.com"
+	}
+	pushSubs, _ := ws.db.GetPushSubscriptions()
+
 	data := map[string]interface{}{
-		"AdminUser":           adminUser,
-		"Stats":               stats,
-		"CurrentPage":         "settings",
-		"Msg":                 r.URL.Query().Get("msg"),
-		"Error":               r.URL.Query().Get("error"),
-		"Count":               r.URL.Query().Get("count"),
-		"Freed":               r.URL.Query().Get("freed"),
-		"DBSize":              dbSize,
-		"DBPath":              ws.db.GetPath(),
-		"ScreenshotFiles":     screenshotFiles,
-		"ScreenshotDiskBytes": screenshotDiskBytes,
-		"RetentionDays":       retentionDays,
+		"AdminUser":              adminUser,
+		"Stats":                  stats,
+		"CurrentPage":            "settings",
+		"Msg":                    r.URL.Query().Get("msg"),
+		"Error":                  r.URL.Query().Get("error"),
+		"Count":                  r.URL.Query().Get("count"),
+		"Freed":                  r.URL.Query().Get("freed"),
+		"DBSize":                 dbSize,
+		"DBPath":                 ws.db.GetPath(),
+		"ScreenshotFiles":        screenshotFiles,
+		"ScreenshotDiskBytes":    screenshotDiskBytes,
+		"RetentionDays":          retentionDays,
+		"VAPIDPublicKey":         vapidPub,
+		"VAPIDPrivateKey":        vapidPriv,
+		"VAPIDSubscriber":        vapidSub,
+		"PushSubscriptionsCount": len(pushSubs),
 	}
 	ws.templates.Execute(w, "settings", data)
 }
@@ -1074,6 +1091,24 @@ func (ws *WebServer) handleAPIPushTest(w http.ResponseWriter, r *http.Request) {
 		"total":   result.TotalSubscriptions,
 		"success": result.SuccessCount,
 		"failed":  result.FailedCount,
+	})
+}
+
+func (ws *WebServer) handleAPIPushReset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if err := ws.db.ClearAllPushSubscriptions(); err != nil {
+		log.Printf("[WEB] Error clearing push subscriptions: %v", err)
+		http.Error(w, `{"error":"db error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok": true,
 	})
 }
 
